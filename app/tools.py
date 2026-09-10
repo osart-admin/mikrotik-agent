@@ -10,7 +10,7 @@ import json
 import re
 from typing import Any, Callable
 
-from . import db, facts as facts_mod, rsc, scrub, store
+from . import db, facts as facts_mod, live, rsc, scrub, store
 from .config import SEARCH_MAX_PER_DEVICE, SEARCH_MAX_TOTAL, TOOL_MAX_CHARS
 
 
@@ -183,6 +183,25 @@ def fleet_summary(**_: Any) -> str:
     return _cap("\n".join(parts))
 
 
+async def get_live_state(device: str = "", query: str = "", match: str = "", limit: int = 50, **_: Any) -> str:
+    """Live router state. Async because it opens an SSH session, unlike the stored-config tools."""
+    if not query:
+        raise ToolError("'query' is required. Valid keys:\n" + live.describe())
+    dev = _devices([device])[0]
+    try:
+        raw = await live.fetch(dev, query)
+        body, shown, total = live.filter_lines(raw, match or None, limit, live.QUERIES[query].tail)
+    except live.LiveError as exc:
+        raise ToolError(str(exc)) from exc
+    q = live.QUERIES[query]
+    head = f"# {dev['slug']} — {q.label} (live, `{q.command}`)"
+    if match:
+        head += f"\n# фильтр /{match}/: {shown} из {total} строк"
+    elif shown < total:
+        head += f"\n# показано {shown} из {total} строк"
+    return _cap(f"{head}\n{body}" if body else f"{head}\n(пусто)")
+
+
 # ---------------------------------------------------------------- registry
 
 Handler = Callable[..., str]
@@ -197,7 +216,11 @@ REGISTRY: dict[str, Handler] = {
     "get_full_export": get_full_export,
     "config_history": config_history,
     "config_diff": config_diff,
+    "get_live_state": get_live_state,
 }
+
+# Tools that must be awaited - they talk to a router instead of reading the local store.
+ASYNC_TOOLS = {"get_live_state"}
 
 SCHEMAS: list[dict[str, Any]] = [
     {
@@ -280,14 +303,38 @@ SCHEMAS: list[dict[str, Any]] = [
             "required": ["device"],
         },
     },
+    {
+        "name": "get_live_state",
+        "description": (
+            "Read what a router is doing RIGHT NOW over SSH - state that never appears in the "
+            "stored configuration: active routes, ARP, DHCP leases, the log, interface counters, "
+            "connection tracking, associated Wi-Fi clients, WireGuard handshakes, firewall rule "
+            "hit counters. Use it when the question is about current behaviour, symptoms or "
+            "'why is X not working', rather than about how something is configured. Slower than "
+            "the stored-config tools and it touches the live device, so use it deliberately.\n\n"
+            "Valid 'query' values:\n" + live.describe()
+        ),
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "device": {"type": "string", "description": "Device slug, name, identity or host."},
+                "query": {"type": "string", "enum": sorted(live.QUERIES), "description": "Which live view to read."},
+                "match": {"type": "string", "description": "Optional case-insensitive regex; only matching lines are returned. Filtering happens locally, so it never changes the command sent to the router."},
+                "limit": {"type": "integer", "description": "Max lines to return (1-200, default 50). Logs return the newest lines."},
+            },
+            "required": ["device", "query"],
+        },
+    },
 ]
 
 
-def call(name: str, arguments: dict[str, Any]) -> str:
+async def call(name: str, arguments: dict[str, Any]) -> str:
     handler = REGISTRY.get(name)
     if handler is None:
         return f"ERROR: unknown tool '{name}'. Available: {', '.join(REGISTRY)}"
     try:
+        if name in ASYNC_TOOLS:
+            return await handler(**(arguments or {}))
         return handler(**(arguments or {}))
     except ToolError as exc:
         return f"ERROR: {exc}"

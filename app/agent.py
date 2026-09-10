@@ -25,6 +25,10 @@ practical terms, and point at the concrete lines you based the answer on.
 Rules:
 - Ground every claim in tool output. Never guess at a configuration you have not read.
 - Prefer get_sections and search_config over get_full_export; the exports are large.
+- Stored config answers "how is it set up"; get_live_state answers "what is it doing now" \
+(active routes, DHCP leases, the log, rule hit counters, Wi-Fi clients, tunnel handshakes). \
+For a symptom or a "why doesn't X work" question, read the config first, then confirm against \
+live state. Say which of the two a statement comes from.
 - When several devices are involved, say explicitly which device each finding came from.
 - If a config contradicts what the user expects, say so plainly and show the lines.
 - Secrets (keys, pre-shared keys, passwords) are replaced with "<hidden>" before you see them. \
@@ -176,7 +180,7 @@ async def run_turn(chat_id: int, user_text: str) -> AsyncIterator[dict[str, Any]
 
         for tc in reply.tool_calls:
             yield {"type": "tool_call", "name": tc.name, "arguments": tc.arguments}
-            result = tools.call(tc.name, tc.arguments)
+            result = await tools.call(tc.name, tc.arguments)
             db.add_message(chat_id, "tool", result, {"tool_call_id": tc.id, "name": tc.name})
             messages.append({"role": "tool", "tool_call_id": tc.id, "content": result})
             yield {"type": "tool_result", "name": tc.name, "chars": len(result),

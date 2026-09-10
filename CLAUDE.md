@@ -69,7 +69,16 @@ Request/data flow (all in `app/`):
   (`ssh,read` - deliberately no `write`, no `sensitive`, and no `test`, which would
   grant bandwidth-test and flood-ping) and imports the agent's public key.
   Admin credentials come from the request and are never stored. ed25519 for ROS 7, RSA for ROS 6.
-- **`tools.py`** / **`agent.py`** - the LLM tool layer and loop. Tools are size-capped; the system
+- **`live.py`** - live router state (routes, ARP, leases, log, counters, Wi-Fi clients, tunnel
+  handshakes). **The command is never built from model input**: the caller passes a key and the
+  command is a literal constant from `QUERIES`, and filtering happens in Python over the returned
+  lines rather than in a `where` clause - so there is no command-injection surface. Every entry is
+  a `print` covered by `read`, so this needs no extra router rights; active probes (ping,
+  traceroute, bandwidth-test) would need the `test` policy and are deliberately out of scope.
+  Results are cached for 15s so a chain of tool calls cannot hammer a device.
+- **`tools.py`** / **`agent.py`** - the LLM tool layer and loop. `tools.call` is async because
+  `get_live_state` opens an SSH session; `ASYNC_TOOLS` lists which handlers must be awaited, and a
+  test asserts that set matches which handlers are actually coroutines. Tools are size-capped; the system
   prompt carries the fleet map so the model navigates instead of grepping blindly.
 - **`llm/`** - provider adapters behind one interface. **`openai` is the Responses API
   (`/v1/responses`), and that is not a preference**: `/v1/chat/completions` refuses function tools

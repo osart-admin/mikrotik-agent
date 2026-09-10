@@ -75,6 +75,21 @@
 </div>
 {% endif %}
 
+{% if device.status == 'ok' %}
+<div class="card">
+<h2>Живое состояние <span class="muted">читается с роутера сейчас, не из сохранённого конфига</span></h2>
+<div class="row" style="align-items:flex-end">
+<div class="field" style="flex:2"><label>Что показать</label>
+<select id="lq">{% for k, label in live_queries %}<option value="{{ k }}">{{ label }}</option>{% endfor %}</select></div>
+<div class="field" style="flex:2"><label>Фильтр (регэксп, необязательно)</label>
+<input id="lm" placeholder="wireless | 10\.0\.3\. | dhcp" spellcheck="false"/></div>
+<div class="field" style="flex:0 0 110px"><label>Строк</label><input id="ll" type="number" min="1" max="200" value="50"/></div>
+<div class="field" style="flex:0 0 130px"><button class="btn" style="width:100%" onclick="loadLive()">Показать</button></div>
+</div>
+<pre id="livebox" style="max-height:460px">Выберите представление и нажмите «Показать»</pre>
+</div>
+{% endif %}
+
 {% if history %}
 <div class="card"><h2>История изменений</h2>
 <table>{% for h in history %}<tr><td><code>{{ h.short }}</code></td><td class="muted">{{ h.date[:16].replace('T',' ') }}</td>
@@ -150,6 +165,18 @@ async function useAgentKey(){
     ? '<div class="alert ok">Вход по ключу работает — '+r.identity+', RouterOS '+r.version+'. Переключено.</div>'
     : '<div class="alert err">'+r.message+'</div>';
   if(r.ok) setTimeout(()=>location.reload(),1600);
+}
+async function loadLive(){
+  const box=document.getElementById('livebox');
+  const q=document.getElementById('lq').value, m=document.getElementById('lm').value, l=document.getElementById('ll').value;
+  box.textContent='Читаю с роутера…';
+  const u='/api/devices/{{ device.id }}/live?query='+encodeURIComponent(q)+'&match='+encodeURIComponent(m)+'&limit='+encodeURIComponent(l);
+  try{
+    const r=await (await fetch(u)).json();
+    box.textContent = r.ok
+      ? r.command+'\n'+(r.shown<r.total?('# показано '+r.shown+' из '+r.total+' строк\n'):'')+'\n'+(r.text||'(пусто)')
+      : 'Ошибка: '+r.message;
+  }catch(e){ box.textContent='Ошибка: '+e; }
 }
 function copyManual(id){
   const btn=event.target, txt=btn.textContent;

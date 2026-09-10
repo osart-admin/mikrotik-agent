@@ -14,7 +14,7 @@ from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 from starlette.middleware.sessions import SessionMiddleware
 
-from . import agent, auth, collector, db, llm, onboard, pricing, rsc, scheduler, scrub, store, tools, winbox_import
+from . import agent, auth, collector, db, live, llm, onboard, pricing, rsc, scheduler, scrub, store, tools, winbox_import
 from .config import APP_TIMEZONE, DATA_DIR
 from .ssh import SSHError, forget_host, known_host_entry
 
@@ -173,6 +173,7 @@ async def device_detail(request: Request, device_id: int):
                   history=store.history(dev["slug"], 15),
                   hostkey=bool(known_host_entry(dev["host"], dev["port"])),
                   pubkeys=collector.public_keys(),
+                  live_queries=[(k, q.label) for k, q in live.QUERIES.items()],
                   manual_ros7=onboard.manual_script("agent", collector.public_keys()["ed25519"], "ed25519"),
                   manual_ros6=onboard.manual_script("agent", collector.public_keys()["rsa"], "rsa"))
 
@@ -290,6 +291,20 @@ async def device_onboard(request: Request, device_id: int, admin_user: str = For
 
 
 # ---------------------------------------------------------------- collection
+
+@app.get("/api/devices/{device_id}/live")
+async def device_live(request: Request, device_id: int, query: str, match: str = "", limit: int = 50):
+    dev = db.get_device(device_id)
+    if dev is None:
+        raise HTTPException(404, "device not found")
+    try:
+        raw = await live.fetch(dev, query)
+        body, shown, total = live.filter_lines(raw, match or None, limit, live.QUERIES[query].tail)
+    except live.LiveError as exc:
+        return JSONResponse({"ok": False, "message": str(exc)}, status_code=200)
+    return {"ok": True, "command": live.QUERIES[query].command, "label": live.QUERIES[query].label,
+            "shown": shown, "total": total, "text": body}
+
 
 @app.post("/api/collect")
 async def collect_now(request: Request, device_id: int | None = None):
