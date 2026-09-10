@@ -26,13 +26,16 @@
 </div>
 <div class="thread">
   <div class="flex between" style="margin-bottom:10px">
-    <span class="muted">{{ provider }}{% if model %} · {{ model }}{% endif %} · {{ device_count }} устройств</span>
+    <span class="muted">{{ provider }}{% if model %} · <code>{{ model }}</code>{% endif %} · {{ device_count }} устройств
+      {% if chat_totals.calls %} · этот чат: <b>{{ fmt_usd(chat_totals.cost) }}</b> ({{ chat_totals.calls }} вызовов){% endif %}</span>
     <button class="btn danger sm" onclick="delChat()">Удалить чат</button>
   </div>
+  {% if budget.exceeded %}<div class="alert err">Месячный лимит {{ fmt_usd(budget.limit) }} исчерпан — запросы остановлены. Измените лимит в <a href="/settings">настройках</a>.</div>
+  {% elif budget.percent and budget.percent > 80 %}<div class="alert warn">Израсходовано {{ '%.0f'|format(budget.percent) }}% месячного лимита ({{ fmt_usd(budget.spent) }} из {{ fmt_usd(budget.limit) }}).</div>{% endif %}
   <div id="log">
   {% for m in messages %}
     {% if m.role=='user' %}<div class="msg u"><div class="who">вы</div><div class="body">{{ m.content }}</div></div>
-    {% elif m.role=='assistant' and m.content %}<div class="msg"><div class="who">агент{% if m.extra.usage %} · {{ m.extra.usage['in'] }}+{{ m.extra.usage.out }} токенов{% endif %}</div><div class="body">{{ m.content }}</div></div>
+    {% elif m.role=='assistant' and m.content %}<div class="msg"><div class="who">агент{% if m.extra.usage %} · {{ m.extra.usage['in'] }}+{{ m.extra.usage.out }} токенов{% if m.extra.usage.cost %} · {{ fmt_usd(m.extra.usage.cost) }}{% endif %}{% endif %}</div><div class="body">{{ m.content }}</div></div>
     {% elif m.role=='tool' %}<div class="tool">✓ <code>{{ m.extra.name }}</code> → {{ m.content|length }} симв.</div>
     {% endif %}
   {% endfor %}
@@ -71,7 +74,15 @@ async function send(){
       else if(ev.type==='tool_result'){add('<div class="tool">'+(ev.error?'✗':'✓')+' <code>'+ev.name+'</code> → '+ev.chars+' симв.'+(ev.error?' — '+esc(ev.preview):'')+'</div>');}
       else if(ev.type==='thinking'&&ev.content){add('<div class="msg"><div class="who">агент</div><div class="body">'+fmt(ev.content)+'</div></div>');}
       else if(ev.type==='answer'){add('<div class="msg"><div class="who">агент</div><div class="body">'+fmt(ev.content)+'</div></div>');}
-      else if(ev.type==='usage'){add('<div class="tool">'+ev.model+' · '+ev.input_tokens+'+'+ev.output_tokens+' токенов · '+ev.steps+' шаг(ов)</div>');}
+      else if(ev.type==='usage'){
+        let bits=[ev.model, ev.input_tokens+'+'+ev.output_tokens+' токенов', ev.steps+' вызов(ов)'];
+        if(ev.cached_input) bits.push(ev.cached_input+' из кэша');
+        if(ev.reasoning) bits.push(ev.reasoning+' reasoning');
+        if(ev.tier==='long') bits.push('тариф long-context');
+        bits.push(ev.priced ? '<b>'+ev.cost_text+'</b>' : '<span class="tag err">цена модели не задана</span>');
+        bits.push('за месяц '+ev.month_cost);
+        add('<div class="tool">'+bits.join(' · ')+'</div>');
+      }
       else if(ev.type==='error'){add('<div class="alert err">'+esc(ev.message)+'</div>');}
     }
   }

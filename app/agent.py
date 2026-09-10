@@ -7,9 +7,10 @@ from __future__ import annotations
 
 import json
 import logging
+import time
 from typing import Any, AsyncIterator
 
-from . import db, facts as facts_mod, llm, store, tools
+from . import db, facts as facts_mod, llm, pricing, store, tools
 from .config import AGENT_MAX_ITERATIONS
 
 log = logging.getLogger("agent")
@@ -62,7 +63,26 @@ def provider_from_settings() -> llm.Provider:
     key = db.get_secret(f"{name}_api_key")
     if not key:
         raise llm.LLMError(f"no API key stored for {name} - add one on the Settings page")
-    return llm.build(name, key, db.get_setting(f"{name}_model", "") or "", db.get_setting(f"{name}_base_url", "") or "")
+    return llm.build(
+        name,
+        key,
+        db.get_setting(f"{name}_model", "") or pricing.DEFAULT_MODEL.get(name, ""),
+        db.get_setting(f"{name}_base_url", "") or "",
+        db.get_setting(f"{name}_reasoning_effort", "") or "",
+    )
+
+
+def budget_status() -> dict[str, Any]:
+    """Month-to-date spend against the configured cap (0 or unset = no cap)."""
+    limit = float(db.get_setting("monthly_budget_usd", "0") or 0)
+    spent = db.month_cost()
+    return {
+        "limit": limit,
+        "spent": spent,
+        "remaining": max(0.0, limit - spent) if limit else None,
+        "percent": (spent / limit * 100) if limit else None,
+        "exceeded": bool(limit and spent >= limit),
+    }
 
 
 def history_for_llm(chat_id: int) -> list[dict[str, Any]]:
@@ -83,6 +103,17 @@ def history_for_llm(chat_id: int) -> list[dict[str, Any]]:
 async def run_turn(chat_id: int, user_text: str) -> AsyncIterator[dict[str, Any]]:
     """Drive one user turn, yielding UI events: tool_call, tool_result, answer, usage, error."""
     db.add_message(chat_id, "user", user_text)
+
+    # Budget is a policy gate: check it before anything else, so an exceeded limit stops the
+    # turn even when the provider settings are also broken.
+    budget = budget_status()
+    if budget["exceeded"]:
+        msg = (f"Месячный лимит расходов исчерпан: потрачено {pricing.fmt_usd(budget['spent'])} "
+               f"из {pricing.fmt_usd(budget['limit'])}. Поднимите лимит в настройках, чтобы продолжить.")
+        db.add_message(chat_id, "assistant", msg)
+        yield {"type": "error", "message": msg}
+        return
+
     try:
         provider = provider_from_settings()
     except llm.LLMError as exc:
@@ -92,9 +123,12 @@ async def run_turn(chat_id: int, user_text: str) -> AsyncIterator[dict[str, Any]
 
     messages = history_for_llm(chat_id)
     system = system_prompt()
-    total_in = total_out = 0
+    turn = pricing.Usage()
+    turn_cost = 0.0
+    price = db.get_model(provider.model)
 
     for step in range(AGENT_MAX_ITERATIONS):
+        t0 = time.monotonic()
         try:
             reply = await provider.chat(system, messages, tools.SCHEMAS)
         except llm.LLMError as exc:
@@ -102,15 +136,28 @@ async def run_turn(chat_id: int, user_text: str) -> AsyncIterator[dict[str, Any]
             db.add_message(chat_id, "assistant", f"[LLM error] {exc}")
             yield {"type": "error", "message": str(exc)}
             return
+        latency = int((time.monotonic() - t0) * 1000)
 
-        total_in += reply.input_tokens
-        total_out += reply.output_tokens
+        # One chat turn is several API calls; each is priced on its own because the
+        # long-context tier is decided per request.
+        call_cost, tier = pricing.cost(reply.usage, price)
+        db.record_usage(chat_id, provider.name, reply.model or provider.model, tier,
+                        reply.usage, call_cost, latency)
+        turn_cost += call_cost
+        for f in ("uncached_input", "cached_input", "cache_write", "output", "reasoning"):
+            setattr(turn, f, getattr(turn, f) + getattr(reply.usage, f))
 
         if not reply.tool_calls:
             db.add_message(chat_id, "assistant", reply.content,
-                           {"usage": {"in": total_in, "out": total_out}, "model": reply.model})
+                           {"usage": {"in": turn.total_input, "out": turn.output,
+                                      "cost": round(turn_cost, 6)}, "model": reply.model})
             yield {"type": "answer", "content": reply.content}
-            yield {"type": "usage", "input_tokens": total_in, "output_tokens": total_out, "model": reply.model, "steps": step + 1}
+            yield {"type": "usage", "input_tokens": turn.total_input, "output_tokens": turn.output,
+                   "cached_input": turn.cached_input, "reasoning": turn.reasoning,
+                   "cost": round(turn_cost, 6), "cost_text": pricing.fmt_usd(turn_cost),
+                   "tier": tier, "model": reply.model, "steps": step + 1,
+                   "month_cost": pricing.fmt_usd(db.month_cost()),
+                   "priced": price is not None}
             return
 
         call_dicts = [{"id": tc.id, "name": tc.name, "arguments": tc.arguments} for tc in reply.tool_calls]
@@ -130,3 +177,7 @@ async def run_turn(chat_id: int, user_text: str) -> AsyncIterator[dict[str, Any]
     msg = f"Stopped after {AGENT_MAX_ITERATIONS} tool rounds without a final answer. Try a narrower question."
     db.add_message(chat_id, "assistant", msg)
     yield {"type": "answer", "content": msg}
+    yield {"type": "usage", "input_tokens": turn.total_input, "output_tokens": turn.output,
+           "cost": round(turn_cost, 6), "cost_text": pricing.fmt_usd(turn_cost),
+           "model": provider.model, "steps": AGENT_MAX_ITERATIONS,
+           "month_cost": pricing.fmt_usd(db.month_cost()), "priced": price is not None}

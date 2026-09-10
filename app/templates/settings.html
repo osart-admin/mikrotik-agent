@@ -20,7 +20,19 @@ input.secret{-webkit-text-security:disc;text-security:disc;font-family:ui-monosp
 <div class="field"><label>Провайдер</label><select name="provider" id="prov" onchange="syncProv()">
 {% for p in keys %}<option value="{{ p }}" {{ 'selected' if p==provider }}>{{ p }}</option>{% endfor %}
 </select></div>
-<div class="field"><label>Модель</label><input name="model" id="model" value="{{ models[provider] }}" placeholder="gpt-4.1 / claude-sonnet-5" autocomplete="off" data-1p-ignore data-lpignore="true" data-bwignore spellcheck="false"/></div>
+<div class="field"><label>Модель</label>
+<select name="model" id="model" onchange="toggleCustom()">
+{% for m in catalog[provider] %}<option value="{{ m.model_id }}" {{ 'selected' if m.model_id==models[provider] }}>{{ m.label or m.model_id }}</option>{% endfor %}
+<option value="__custom__" {{ 'selected' if models[provider] and models[provider] not in catalog[provider]|map(attribute='model_id')|list }}>другая — ввести вручную…</option>
+</select></div>
+</div>
+<div class="row">
+<div class="field" id="customwrap" style="display:none"><label>Идентификатор модели</label>
+<input name="model_custom" id="model_custom" value="{{ models[provider] if models[provider] not in catalog[provider]|map(attribute='model_id')|list else '' }}" placeholder="gpt-6-astra" autocomplete="off" spellcheck="false"/></div>
+<div class="field"><label>Глубина рассуждений (reasoning effort)</label>
+<select name="reasoning_effort">
+{% for e in reasoning_efforts %}<option value="{{ e }}" {{ 'selected' if e==efforts[provider] }}>{{ e or 'не передавать (по умолчанию модели)' }}</option>{% endfor %}
+</select></div>
 </div>
 <div class="field"><label>API-ключ {% if keys[provider] %}<span class="tag ok">сохранён</span>{% else %}<span class="tag err">не задан</span>{% endif %}</label>
 <input type="text" class="secret" name="api_key" placeholder="{{ 'оставьте пустым — не менять' if keys[provider] else 'sk-...' }}" autocomplete="off" data-1p-ignore data-lpignore="true" data-bwignore spellcheck="false" autocapitalize="off" autocorrect="off"/></div>
@@ -32,7 +44,63 @@ input.secret{-webkit-text-security:disc;text-security:disc;font-family:ui-monosp
 <input type="hidden" name="provider" value="{{ provider }}"/>
 <button class="btn danger sm">Удалить ключ {{ provider }}</button></form>{% endif %}
 <div id="llmmsg" style="margin-top:10px"></div>
-<p class="muted" style="margin-top:10px">Ключ шифруется (Fernet) и хранится в <code>/data</code>. Конфиги проходят через скраббер — пароли, PSK и приватные ключи заменяются на <code>&lt;hidden&gt;</code> до отправки в модель.</p>
+<p class="muted" style="margin-top:10px">Ключ шифруется (Fernet) и хранится в <code>/data</code>. Конфиги проходят через скраббер — пароли, PSK и приватные ключи заменяются на <code>&lt;hidden&gt;</code> до отправки в модель. Reasoning-токены тарифицируются как выходные, поэтому глубина рассуждений напрямую влияет на счёт.</p>
+</div>
+
+<div class="card">
+<h2>Бюджет</h2>
+<form method="post" action="/settings/budget" class="row">
+<div class="field"><label>Месячный лимит, $ (0 — без лимита)</label>
+<input name="monthly_budget_usd" type="number" step="0.01" min="0" value="{{ '%.2f'|format(budget.limit) }}"/></div>
+<div class="field" style="flex:0 0 130px"><label>&nbsp;</label><button class="btn" style="width:100%">Сохранить</button></div>
+</form>
+<p class="muted">Потрачено в этом месяце: <b>{{ fmt_usd(budget.spent) }}</b>{% if budget.limit %} из {{ fmt_usd(budget.limit) }} — осталось {{ fmt_usd(budget.remaining) }}{% endif %}. Подробности на странице <a href="/costs">Расходы</a>.</p>
+{% if budget.limit %}<div class="bar {{ 'hot' if budget.percent and budget.percent > 80 }}"><i style="width:{{ [budget.percent or 0, 100]|min }}%"></i></div>{% endif %}
+<p class="muted" style="margin-top:8px">При достижении лимита чат перестаёт отправлять запросы — сбор конфигов и остальной интерфейс продолжают работать.</p>
+</div>
+
+<div class="card">
+<h2>Модели и цены <span class="muted">$ за 1M токенов</span></h2>
+<p class="muted">Цены провайдеры меняют без предупреждения, поэтому таблица редактируемая — пересборка не нужна. Тариф long-context применяется ко <b>всему</b> запросу, когда вход превышает порог.</p>
+<form method="post" action="/settings/models">
+<div style="overflow-x:auto">
+<table>
+<tr><th></th><th>ID модели</th><th>Название</th>
+<th class="num" colspan="4" style="text-align:center;border-left:1px solid var(--border)">Short context</th>
+<th class="num" colspan="4" style="text-align:center;border-left:1px solid var(--border)">Long context</th>
+<th class="num">Порог</th></tr>
+<tr><th>вкл</th><th></th><th></th>
+<th class="num" style="border-left:1px solid var(--border)">вход</th><th class="num">кэш</th><th class="num">запись</th><th class="num">выход</th>
+<th class="num" style="border-left:1px solid var(--border)">вход</th><th class="num">кэш</th><th class="num">запись</th><th class="num">выход</th>
+<th class="num">токенов</th></tr>
+{% for m in all_models %}
+<tr>
+<td><input type="checkbox" name="enabled" value="{{ loop.index0 }}" {{ 'checked' if m.enabled }} style="width:auto"/></td>
+<td><input name="model_id" value="{{ m.model_id }}" style="min-width:130px"/>
+    <input type="hidden" name="provider" value="{{ m.provider }}"/></td>
+<td><input name="label" value="{{ m.label }}" style="min-width:170px"/></td>
+{% for f in ['input','cached_input','cache_write','output','long_input','long_cached_input','long_cache_write','long_output'] %}
+<td class="num"><input class="price" name="{{ f }}" value="{{ m[f] }}" style="min-width:66px{{ ';border-left:1px solid var(--border)' if f in ('input','long_input') }}"/></td>
+{% endfor %}
+<td class="num"><input class="price" name="long_threshold" value="{{ m.long_threshold }}" style="min-width:80px"/></td>
+</tr>
+{% endfor %}
+<tr>
+<td><input type="checkbox" name="enabled" value="{{ all_models|length }}" checked style="width:auto"/></td>
+<td><input name="model_id" placeholder="новая модель" style="min-width:130px"/>
+    <input type="hidden" name="provider" value="{{ provider }}"/></td>
+<td><input name="label" placeholder="описание" style="min-width:170px"/></td>
+{% for f in ['input','cached_input','cache_write','output','long_input','long_cached_input','long_cache_write','long_output'] %}
+<td class="num"><input class="price" name="{{ f }}" value="0" style="min-width:66px"/></td>
+{% endfor %}
+<td class="num"><input class="price" name="long_threshold" value="272000" style="min-width:80px"/></td>
+</tr>
+</table>
+</div>
+<div class="flex" style="margin-top:12px"><button class="btn">Сохранить цены</button></div>
+</form>
+<form method="post" action="/settings/models/reset" style="margin-top:8px" onsubmit="return confirm('Вернуть встроенные цены для моделей из каталога?')">
+<button class="btn sec sm">Сбросить к встроенному каталогу</button></form>
 </div>
 
 <div class="card">
@@ -73,8 +141,13 @@ input.secret{-webkit-text-security:disc;text-security:disc;font-family:ui-monosp
 
 {% block script %}<script>
 const MODELS={{ models|tojson }}, BASEURLS={{ base_urls|tojson }};
-function syncProv(){const p=document.getElementById('prov').value;
-  document.getElementById('model').value=MODELS[p]||'';document.getElementById('baseurl').value=BASEURLS[p]||'';}
+function syncProv(){location.href='/settings?provider='+encodeURIComponent(document.getElementById('prov').value);}
+function toggleCustom(){
+  const sel=document.getElementById('model'), wrap=document.getElementById('customwrap');
+  wrap.style.display = sel.value==='__custom__' ? '' : 'none';
+  if(sel.value==='__custom__') document.getElementById('model_custom').focus();
+}
+toggleCustom();
 async function testLLM(){
   const el=document.getElementById('llmmsg'); el.innerHTML='<div class="alert warn">Проверяю…</div>';
   const r=await post('/api/settings/llm/test');

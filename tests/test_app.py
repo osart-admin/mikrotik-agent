@@ -115,3 +115,66 @@ def test_settings_form_does_not_expose_a_password_field(logged_in):
     assert 'name="api_key"' in form
     assert 'type="password" name="api_key"' not in form
     assert 'autocomplete="off"' in form
+
+
+def test_model_dropdown_defaults_to_mid_tier_not_the_priciest(logged_in):
+    """An unset model must not fall through to whichever row sorts first (gpt-6-astra)."""
+    from app import pricing
+    db.set_setting("openai_model", "")          # earlier tests leave a model selected
+    html = logged_in.get("/settings").text
+    form = html.split('action="/settings/llm"')[1].split("</form>")[0]
+    default = pricing.DEFAULT_MODEL["openai"]
+    assert f'value="{default}" selected' in form.replace("  ", " ")
+    assert 'value="gpt-6-astra" selected' not in form
+
+
+def test_model_dropdown_lists_the_catalog(logged_in):
+    form = logged_in.get("/settings").text.split('action="/settings/llm"')[1].split("</form>")[0]
+    for mid in ("gpt-6-astra", "gpt-5.6-sol", "gpt-5.6-terra", "gpt-5.6-luna"):
+        assert f'value="{mid}"' in form
+    assert 'value="__custom__"' in form
+
+
+def test_custom_model_id_is_accepted(logged_in):
+    logged_in.post("/settings/llm", data={"provider": "openai", "model": "__custom__",
+                                          "model_custom": "gpt-7-unreleased", "base_url": "",
+                                          "api_key": "", "reasoning_effort": "high"})
+    assert db.get_setting("openai_model") == "gpt-7-unreleased"
+    assert db.get_setting("openai_reasoning_effort") == "high"
+    logged_in.post("/settings/llm", data={"provider": "openai", "model": "gpt-5.6-terra",
+                                          "base_url": "", "api_key": "", "reasoning_effort": ""})
+
+
+def test_bogus_reasoning_effort_is_dropped(logged_in):
+    logged_in.post("/settings/llm", data={"provider": "openai", "model": "gpt-5.6-terra",
+                                          "base_url": "", "api_key": "", "reasoning_effort": "turbo"})
+    assert db.get_setting("openai_reasoning_effort") == ""
+
+
+def test_budget_blocks_the_chat_when_exceeded(logged_in):
+    from app import pricing
+    db.set_setting("monthly_budget_usd", "0.01")
+    db.record_usage(None, "openai", "gpt-5.6-terra", "short", pricing.Usage(output=1_000_000), 12.0, 100)
+    cid = logged_in.post("/api/chat/new").json()["id"]
+    with logged_in.stream("POST", f"/api/chat/{cid}/send", json={"message": "hi"}) as r:
+        body = "".join(r.iter_text())
+    assert "лимит" in body
+    db.set_setting("monthly_budget_usd", "0")
+    logged_in.post(f"/api/chat/{cid}/delete")
+
+
+def test_costs_page_renders(logged_in):
+    r = logged_in.get("/costs")
+    assert r.status_code == 200 and "Расходы на модель" in r.text
+
+
+def test_model_prices_are_editable(logged_in):
+    logged_in.post("/settings/models", data={
+        "model_id": ["gpt-5.6-luna"], "provider": ["openai"], "label": ["Luna"],
+        "input": ["0.25"], "cached_input": ["0.02"], "cache_write": ["0.25"], "output": ["1.20"],
+        "long_input": ["0.50"], "long_cached_input": ["0.04"], "long_cache_write": ["0.50"],
+        "long_output": ["1.80"], "long_threshold": ["272000"], "enabled": ["0"],
+    })
+    assert db.get_model("gpt-5.6-luna")["input"] == 0.25
+    logged_in.post("/settings/models/reset")
+    assert db.get_model("gpt-5.6-luna")["input"] == 0.20

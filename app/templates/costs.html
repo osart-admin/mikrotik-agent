@@ -1,0 +1,82 @@
+{% extends "base.html" %}{% set page='costs' %}{% block content %}
+<h2 style="margin:0 0 14px;font-size:17px">Расходы на модель</h2>
+
+<div class="grid" style="grid-template-columns:repeat(auto-fill,minmax(190px,1fr));margin-bottom:16px">
+  <div class="stat"><div class="l">Сегодня</div><div class="v">{{ fmt_usd(today.cost) }}</div>
+    <div class="muted">{{ today.calls }} запросов</div></div>
+  <div class="stat"><div class="l">Этот месяц</div><div class="v">{{ fmt_usd(this_month.cost) }}</div>
+    {% if budget.limit %}<div class="muted">из {{ fmt_usd(budget.limit) }}</div>
+    <div class="bar {{ 'hot' if budget.percent and budget.percent > 80 }}"><i style="width:{{ [budget.percent or 0, 100]|min }}%"></i></div>
+    {% else %}<div class="muted">лимит не задан</div>{% endif %}</div>
+  <div class="stat"><div class="l">Всего</div><div class="v">{{ fmt_usd(total.cost) }}</div>
+    <div class="muted">{{ total.calls }} запросов</div></div>
+  <div class="stat"><div class="l">Токенов всего</div>
+    <div class="v">{{ '{:,}'.format(total.uncached_input + total.cached_input + total.cache_write + total.output).replace(',', ' ') }}</div>
+    <div class="muted">{{ '{:,}'.format(total.cached_input).replace(',',' ') }} из кэша</div></div>
+</div>
+
+{% if budget.exceeded %}<div class="alert err">Месячный лимит исчерпан — чат остановлен. Поднимите лимит в <a href="/settings">настройках</a>.</div>
+{% elif budget.percent and budget.percent > 80 %}<div class="alert warn">Израсходовано {{ '%.0f'|format(budget.percent) }}% месячного лимита.</div>{% endif %}
+
+{% if not total.calls %}
+<div class="card"><p class="muted">Запросов к модели ещё не было. Задайте вопрос в <a href="/chat">чате</a> — здесь появится разбивка.</p></div>
+{% else %}
+
+<div class="row" style="align-items:flex-start">
+<div class="card" style="flex:2">
+<h2>По дням</h2>
+<table>
+<tr><th>Дата</th><th class="num">Запросов</th><th class="num">Вход</th><th class="num">Из кэша</th><th class="num">Выход</th><th class="num">Стоимость</th></tr>
+{% for d in by_day %}
+{% set mx = by_day|map(attribute='cost')|max %}
+<tr><td>{{ d.key }}</td><td class="num">{{ d.calls }}</td>
+<td class="num muted">{{ '{:,}'.format(d.uncached_input).replace(',',' ') }}</td>
+<td class="num muted">{{ '{:,}'.format(d.cached_input).replace(',',' ') }}</td>
+<td class="num muted">{{ '{:,}'.format(d.output).replace(',',' ') }}</td>
+<td class="num"><b>{{ fmt_usd(d.cost) }}</b>
+<div class="bar"><i style="width:{{ (d.cost / mx * 100) if mx else 0 }}%"></i></div></td></tr>
+{% endfor %}
+</table>
+</div>
+
+<div class="card" style="flex:1">
+<h2>По моделям</h2>
+<table>
+<tr><th>Модель</th><th class="num">Запросов</th><th class="num">Стоимость</th></tr>
+{% for m in by_model %}
+<tr><td><code>{{ m.key or '—' }}</code></td><td class="num">{{ m.calls }}</td><td class="num"><b>{{ fmt_usd(m.cost) }}</b></td></tr>
+{% endfor %}
+</table>
+<h2 style="margin-top:18px">По чатам</h2>
+<table>
+<tr><th>Чат</th><th class="num">Стоимость</th></tr>
+{% for c in by_chat %}
+<tr><td>{% if c.key %}<a href="/chat/{{ c.key }}">{{ chats.get(c.key, 'чат #' ~ c.key)[:40] }}</a>{% else %}<span class="muted">служебное</span>{% endif %}</td>
+<td class="num">{{ fmt_usd(c.cost) }}</td></tr>
+{% endfor %}
+</table>
+</div>
+</div>
+
+<div class="card">
+<h2>Последние вызовы API</h2>
+<p class="muted">Один вопрос в чате — несколько вызовов: модель ходит за данными инструментами, каждый заход тарифицируется отдельно.</p>
+<table>
+<tr><th>Время</th><th>Модель</th><th>Тариф</th><th>Чат</th><th class="num">Вход</th><th class="num">Кэш</th><th class="num">Запись&nbsp;кэша</th><th class="num">Выход</th><th class="num">Reasoning</th><th class="num">Задержка</th><th class="num">Стоимость</th></tr>
+{% for u in recent %}
+<tr><td class="muted">{{ u.ts[5:16].replace('T',' ') }}</td>
+<td><code>{{ u.model }}</code></td>
+<td>{% if u.tier=='long' %}<span class="tag warn">long</span>{% elif u.tier=='unknown' %}<span class="tag err">нет цены</span>{% else %}<span class="tag">short</span>{% endif %}</td>
+<td class="muted">{{ (chats.get(u.chat_id) or '—')[:24] }}</td>
+<td class="num muted">{{ '{:,}'.format(u.uncached_input).replace(',',' ') }}</td>
+<td class="num muted">{{ '{:,}'.format(u.cached_input).replace(',',' ') }}</td>
+<td class="num muted">{{ '{:,}'.format(u.cache_write).replace(',',' ') }}</td>
+<td class="num muted">{{ '{:,}'.format(u.output).replace(',',' ') }}</td>
+<td class="num muted">{{ '{:,}'.format(u.reasoning).replace(',',' ') if u.reasoning else '' }}</td>
+<td class="num muted">{{ u.latency_ms }} мс</td>
+<td class="num"><b>{{ fmt_usd(u.cost_usd) }}</b></td></tr>
+{% endfor %}
+</table>
+</div>
+{% endif %}
+{% endblock %}

@@ -59,6 +59,14 @@ code{font-family:ui-monospace,SFMono-Regular,Menlo,monospace;font-size:12px;back
 .grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(300px,1fr));gap:12px}
 .auth{max-width:380px;margin:80px auto}
 .diff .a{background:var(--add)}.diff .d{background:var(--del)}
+.stat{background:var(--card);border:1px solid var(--border);border-radius:10px;padding:14px}
+.stat .v{font-size:22px;font-weight:600;letter-spacing:-.02em}
+.stat .l{font-size:11px;text-transform:uppercase;letter-spacing:.04em;color:var(--muted);margin-bottom:5px}
+.bar{height:6px;background:var(--border2);border-radius:4px;overflow:hidden;margin-top:8px}
+.bar>i{display:block;height:100%;background:var(--accent);border-radius:4px}
+.bar.hot>i{background:#dc2626}
+.num{text-align:right;font-variant-numeric:tabular-nums;font-family:ui-monospace,Menlo,monospace}
+input.price{padding:4px 6px;font-size:12px;text-align:right;font-family:ui-monospace,Menlo,monospace}
 details summary{cursor:pointer;font-size:13px;color:var(--text2);padding:4px 0}
 @media(max-width:700px){header nav{overflow-x:auto}main{padding:14px 10px 40px}}
 {% block style %}{% endblock %}
@@ -73,6 +81,7 @@ details summary{cursor:pointer;font-size:13px;color:var(--text2);padding:4px 0}
 <a href="/chat" class="{{ 'on' if page=='chat' }}">Чат</a>
 <a href="/search" class="{{ 'on' if page=='search' }}">Поиск</a>
 <a href="/runs" class="{{ 'on' if page=='runs' }}">Сборы</a>
+<a href="/costs" class="{{ 'on' if page=='costs' }}">Расходы</a>
 <a href="/settings" class="{{ 'on' if page=='settings' }}">Настройки</a>
 </nav>
 <button class="btn sec sm" onclick="toggleTheme()">◐</button>

@@ -88,6 +88,43 @@ CREATE TABLE IF NOT EXISTS messages (
     created_at TEXT NOT NULL
 );
 CREATE INDEX IF NOT EXISTS idx_messages_chat ON messages(chat_id, id);
+CREATE TABLE IF NOT EXISTS models (
+    model_id TEXT PRIMARY KEY,
+    provider TEXT NOT NULL,
+    label TEXT NOT NULL DEFAULT '',
+    input REAL NOT NULL DEFAULT 0,
+    cached_input REAL NOT NULL DEFAULT 0,
+    cache_write REAL NOT NULL DEFAULT 0,
+    output REAL NOT NULL DEFAULT 0,
+    long_input REAL NOT NULL DEFAULT 0,
+    long_cached_input REAL NOT NULL DEFAULT 0,
+    long_cache_write REAL NOT NULL DEFAULT 0,
+    long_output REAL NOT NULL DEFAULT 0,
+    long_threshold INTEGER NOT NULL DEFAULT 272000,
+    sort_order INTEGER NOT NULL DEFAULT 100,
+    enabled INTEGER NOT NULL DEFAULT 1
+);
+CREATE TABLE IF NOT EXISTS usage (
+    id INTEGER PRIMARY KEY,
+    ts TEXT NOT NULL,
+    day TEXT NOT NULL,
+    month TEXT NOT NULL,
+    chat_id INTEGER,
+    provider TEXT NOT NULL DEFAULT '',
+    model TEXT NOT NULL DEFAULT '',
+    tier TEXT NOT NULL DEFAULT 'short',
+    uncached_input INTEGER NOT NULL DEFAULT 0,
+    cached_input INTEGER NOT NULL DEFAULT 0,
+    cache_write INTEGER NOT NULL DEFAULT 0,
+    output INTEGER NOT NULL DEFAULT 0,
+    reasoning INTEGER NOT NULL DEFAULT 0,
+    cost_usd REAL NOT NULL DEFAULT 0,
+    latency_ms INTEGER NOT NULL DEFAULT 0,
+    kind TEXT NOT NULL DEFAULT 'chat'
+);
+CREATE INDEX IF NOT EXISTS idx_usage_month ON usage(month);
+CREATE INDEX IF NOT EXISTS idx_usage_day ON usage(day);
+CREATE INDEX IF NOT EXISTS idx_usage_chat ON usage(chat_id, id);
 CREATE TABLE IF NOT EXISTS audit (
     id INTEGER PRIMARY KEY,
     ts TEXT NOT NULL,
@@ -116,6 +153,19 @@ def init_db() -> None:
         conn.executescript(SCHEMA)
     if get_setting("session_secret") is None:
         set_setting("session_secret", pysecrets.token_urlsafe(48))
+    seed_models()
+
+
+def seed_models() -> None:
+    """Insert catalogue entries that are missing. Never overwrites prices edited in the UI."""
+    from .pricing import CATALOG
+
+    with connect() as conn:
+        for m in CATALOG:
+            d = m.as_dict()
+            cols = ", ".join(d)
+            marks = ", ".join("?" for _ in d)
+            conn.execute(f"INSERT OR IGNORE INTO models({cols}) VALUES({marks})", tuple(d.values()))
 
 
 # ---------------------------------------------------------------- settings / secrets
@@ -379,3 +429,102 @@ def audit(username: str, action: str, details: str = "") -> None:
 def list_audit(limit: int = 200) -> list[sqlite3.Row]:
     with connect() as conn:
         return conn.execute("SELECT * FROM audit ORDER BY id DESC LIMIT ?", (limit,)).fetchall()
+
+
+# ---------------------------------------------------------------- models & prices
+
+def list_models(provider: str | None = None, enabled_only: bool = True) -> list[sqlite3.Row]:
+    q, args = "SELECT * FROM models", []
+    where = []
+    if provider:
+        where.append("provider=?")
+        args.append(provider)
+    if enabled_only:
+        where.append("enabled=1")
+    if where:
+        q += " WHERE " + " AND ".join(where)
+    q += " ORDER BY sort_order, model_id"
+    with connect() as conn:
+        return conn.execute(q, args).fetchall()
+
+
+def get_model(model_id: str) -> dict[str, Any] | None:
+    with connect() as conn:
+        row = conn.execute("SELECT * FROM models WHERE model_id=?", (model_id,)).fetchone()
+    return dict(row) if row else None
+
+
+def upsert_model(fields: dict[str, Any]) -> None:
+    fields = dict(fields)
+    cols = ", ".join(fields)
+    marks = ", ".join("?" for _ in fields)
+    updates = ", ".join(f"{k}=excluded.{k}" for k in fields if k != "model_id")
+    with connect() as conn:
+        conn.execute(
+            f"INSERT INTO models({cols}) VALUES({marks}) ON CONFLICT(model_id) DO UPDATE SET {updates}",
+            tuple(fields.values()),
+        )
+
+
+def delete_model(model_id: str) -> None:
+    with connect() as conn:
+        conn.execute("DELETE FROM models WHERE model_id=?", (model_id,))
+
+
+# ---------------------------------------------------------------- usage & cost
+
+def record_usage(chat_id: int | None, provider: str, model: str, tier: str, usage: Any,
+                 cost_usd: float, latency_ms: int, kind: str = "chat") -> None:
+    ts = now_iso()
+    with connect() as conn:
+        conn.execute(
+            "INSERT INTO usage(ts,day,month,chat_id,provider,model,tier,uncached_input,cached_input,"
+            "cache_write,output,reasoning,cost_usd,latency_ms,kind) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
+            (ts, ts[:10], ts[:7], chat_id, provider, model, tier, usage.uncached_input,
+             usage.cached_input, usage.cache_write, usage.output, usage.reasoning,
+             cost_usd, latency_ms, kind),
+        )
+
+
+_SUMS = ("COUNT(*) AS calls, COALESCE(SUM(cost_usd),0) AS cost, "
+         "COALESCE(SUM(uncached_input),0) AS uncached_input, COALESCE(SUM(cached_input),0) AS cached_input, "
+         "COALESCE(SUM(cache_write),0) AS cache_write, COALESCE(SUM(output),0) AS output, "
+         "COALESCE(SUM(reasoning),0) AS reasoning")
+
+
+def usage_totals(where: str = "", args: tuple = ()) -> dict[str, Any]:
+    q = f"SELECT {_SUMS} FROM usage"
+    if where:
+        q += " WHERE " + where
+    with connect() as conn:
+        return dict(conn.execute(q, args).fetchone())
+
+
+def month_cost(month: str | None = None) -> float:
+    month = month or now_iso()[:7]
+    with connect() as conn:
+        return conn.execute("SELECT COALESCE(SUM(cost_usd),0) FROM usage WHERE month=?", (month,)).fetchone()[0]
+
+
+def usage_by(group: str, limit: int = 60) -> list[dict[str, Any]]:
+    if group not in ("day", "month", "model", "provider", "chat_id"):
+        raise ValueError("bad grouping")
+    with connect() as conn:
+        rows = conn.execute(
+            f"SELECT {group} AS key, {_SUMS} FROM usage GROUP BY {group} ORDER BY "
+            f"{'key DESC' if group in ('day', 'month') else 'cost DESC'} LIMIT ?", (limit,)
+        ).fetchall()
+    return [dict(r) for r in rows]
+
+
+def chat_cost(chat_id: int) -> dict[str, Any]:
+    return usage_totals("chat_id=?", (chat_id,))
+
+
+def recent_usage(limit: int = 100) -> list[dict[str, Any]]:
+    with connect() as conn:
+        rows = conn.execute(
+            "SELECT u.*, c.title AS chat_title FROM usage u LEFT JOIN chats c ON c.id=u.chat_id "
+            "ORDER BY u.id DESC LIMIT ?", (limit,)
+        ).fetchall()
+    return [dict(r) for r in rows]

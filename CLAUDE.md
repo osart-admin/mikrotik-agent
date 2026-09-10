@@ -71,7 +71,19 @@ Request/data flow (all in `app/`):
 - **`tools.py`** / **`agent.py`** - the LLM tool layer and loop. Tools are size-capped; the system
   prompt carries the fleet map so the model navigates instead of grepping blindly.
 - **`llm/`** - provider adapters (`openai`, `anthropic`) behind one interface. API keys are entered
-  in the UI and stored Fernet-encrypted; there is no key env var by design.
+  in the UI and stored Fernet-encrypted; there is no key env var by design. Each adapter
+  normalises usage into `pricing.Usage`: **OpenAI's `prompt_tokens` already includes cached
+  tokens** (so uncached = prompt - cached - written) while Anthropic reports cache reads/writes
+  as separate fields. Getting this wrong bills cached input twice, at both rates.
+- **`pricing.py`** - model catalogue and cost arithmetic. Prices are per 1M tokens and seeded into
+  the `models` table so they can be corrected from the UI without a rebuild; `db.list_models()`
+  is the runtime source of truth. Above `long_threshold` input tokens (272k, verified against the
+  OpenAI pricing page 2026-09-10) the long tier applies to the **whole** request, not the excess -
+  uniformly 2x input / 1.5x output. Reasoning tokens are a subset of output, billed at the output
+  rate, so `reasoning_effort` directly moves the bill.
+- Every API call writes a `usage` row; one chat turn is several calls because of the tool loop.
+  `/costs` aggregates by day/model/chat, and `agent.budget_status()` gates a turn before the
+  provider is even constructed.
 
 ## Notable constraints
 

@@ -14,7 +14,7 @@ from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 from starlette.middleware.sessions import SessionMiddleware
 
-from . import agent, auth, collector, db, llm, onboard, rsc, scheduler, scrub, store, tools, winbox_import
+from . import agent, auth, collector, db, llm, onboard, pricing, rsc, scheduler, scrub, store, tools, winbox_import
 from .config import APP_TIMEZONE, DATA_DIR
 from .ssh import SSHError, forget_host, known_host_entry
 
@@ -327,7 +327,9 @@ async def chat_page(request: Request, chat_id: int):
                   messages=db.list_messages(chat_id), provider=provider,
                   model=db.get_setting(f"{provider}_model", "") or "",
                   has_key=db.has_secret(f"{provider}_api_key"),
-                  device_count=len(db.list_devices()))
+                  device_count=len(db.list_devices()),
+                  chat_totals=db.chat_cost(chat_id), budget=agent.budget_status(),
+                  fmt_usd=pricing.fmt_usd)
 
 
 @app.post("/api/chat/new")
@@ -371,12 +373,21 @@ async def chat_send(request: Request, chat_id: int):
 # ---------------------------------------------------------------- settings
 
 @app.get("/settings", response_class=HTMLResponse)
-async def settings_page(request: Request, imported: int = 0, error: str = ""):
-    provider = db.get_setting("llm_provider", "openai")
+async def settings_page(request: Request, imported: int = 0, error: str = "", provider: str = ""):
+    # ?provider= previews another provider's settings without switching the active one.
+    provider = provider if provider in llm.PROVIDERS else (db.get_setting("llm_provider", "openai") or "openai")
+    # Falling back to the first catalogue row would silently select the most expensive model,
+    # so an unset provider gets an explicit mid-range default instead.
+    chosen = {p: (db.get_setting(f"{p}_model", "") or pricing.DEFAULT_MODEL.get(p, "")) for p in llm.PROVIDERS}
     return render(request, "settings.html", provider=provider,
-                  models={p: db.get_setting(f"{p}_model", "") or "" for p in llm.PROVIDERS},
+                  models=chosen,
                   keys={p: db.has_secret(f"{p}_api_key") for p in llm.PROVIDERS},
                   base_urls={p: db.get_setting(f"{p}_base_url", "") or "" for p in llm.PROVIDERS},
+                  efforts={p: db.get_setting(f"{p}_reasoning_effort", "") or "" for p in llm.PROVIDERS},
+                  catalog={p: [dict(m) for m in db.list_models(p)] for p in llm.PROVIDERS},
+                  all_models=[dict(m) for m in db.list_models(enabled_only=False)],
+                  reasoning_efforts=pricing.REASONING_EFFORTS,
+                  budget=agent.budget_status(), fmt_usd=pricing.fmt_usd,
                   interval=db.get_setting("collect_interval_minutes", "0"),
                   next_run=scheduler.next_run(), pubkeys=collector.public_keys(),
                   users=[dict(u) for u in db.list_users()], audit=[dict(a) for a in db.list_audit(50)],
@@ -385,11 +396,17 @@ async def settings_page(request: Request, imported: int = 0, error: str = ""):
 
 @app.post("/settings/llm")
 async def settings_llm(request: Request, provider: str = Form("openai"), model: str = Form(""),
-                       base_url: str = Form(""), api_key: str = Form("")):
+                       model_custom: str = Form(""), base_url: str = Form(""), api_key: str = Form(""),
+                       reasoning_effort: str = Form("")):
     user = auth.require_user(request)
     if provider not in llm.PROVIDERS:
         raise HTTPException(400, "unknown provider")
-    api_key, model, base_url = api_key.strip(), model.strip(), base_url.strip()
+    api_key, base_url = api_key.strip(), base_url.strip()
+    # "__custom__" in the dropdown reveals a free-text box, so new models can be used before
+    # they are added to the catalogue.
+    model = (model_custom.strip() if model == "__custom__" else model.strip())
+    if reasoning_effort not in pricing.REASONING_EFFORTS:
+        reasoning_effort = ""
 
     # Browsers used to autofill this form as if it were a login (see settings.html). Catch the
     # accident server-side too: storing the operator's own UI password as an API key would leak
@@ -401,6 +418,7 @@ async def settings_llm(request: Request, provider: str = Form("openai"), model: 
     db.set_setting("llm_provider", provider)
     db.set_setting(f"{provider}_model", model)
     db.set_setting(f"{provider}_base_url", base_url)
+    db.set_setting(f"{provider}_reasoning_effort", reasoning_effort)
     if api_key:
         db.set_secret(f"{provider}_api_key", api_key)
         db.audit(user["username"], "api_key_set", provider)
@@ -505,3 +523,69 @@ async def import_confirm(request: Request):
     request.session.pop("import_records", None)
     db.audit(user["username"], "winbox_import", f"{created} devices")
     return RedirectResponse(f"/settings?imported={created}", status_code=303)
+
+
+@app.post("/settings/budget")
+async def settings_budget(request: Request, monthly_budget_usd: float = Form(0)):
+    user = auth.require_user(request)
+    db.set_setting("monthly_budget_usd", str(max(0.0, monthly_budget_usd)))
+    db.audit(user["username"], "budget", f"${monthly_budget_usd}/mo")
+    return RedirectResponse("/settings", status_code=303)
+
+
+@app.post("/settings/models")
+async def settings_models(request: Request):
+    """Save the price table. Prices change without notice, so they are editable, not baked in."""
+    user = auth.require_user(request)
+    form = await request.form()
+    ids = form.getlist("model_id")
+    numeric = ("input", "cached_input", "cache_write", "output",
+               "long_input", "long_cached_input", "long_cache_write", "long_output")
+    saved = 0
+    for i, mid in enumerate(ids):
+        mid = str(mid).strip()
+        if not mid:
+            continue
+        fields: dict[str, Any] = {"model_id": mid,
+                                  "provider": str(form.getlist("provider")[i]).strip() or "openai",
+                                  "label": str(form.getlist("label")[i]).strip()}
+        for key in numeric:
+            try:
+                fields[key] = float(str(form.getlist(key)[i]) or 0)
+            except (ValueError, IndexError):
+                fields[key] = 0.0
+        try:
+            fields["long_threshold"] = int(str(form.getlist("long_threshold")[i]) or pricing.LONG_CONTEXT_THRESHOLD)
+        except (ValueError, IndexError):
+            fields["long_threshold"] = pricing.LONG_CONTEXT_THRESHOLD
+        fields["enabled"] = 1 if str(i) in set(form.getlist("enabled")) else 0
+        db.upsert_model(fields)
+        saved += 1
+    db.audit(user["username"], "model_prices", f"{saved} models")
+    return RedirectResponse("/settings", status_code=303)
+
+
+@app.post("/settings/models/reset")
+async def settings_models_reset(request: Request):
+    user = auth.require_user(request)
+    for m in pricing.CATALOG:
+        db.upsert_model(m.as_dict() | {"enabled": 1})
+    db.audit(user["username"], "model_prices_reset")
+    return RedirectResponse("/settings", status_code=303)
+
+
+@app.get("/costs", response_class=HTMLResponse)
+async def costs_page(request: Request):
+    today = db.now_iso()[:10]
+    month = db.now_iso()[:7]
+    return render(request, "costs.html",
+                  total=db.usage_totals(),
+                  today=db.usage_totals("day=?", (today,)),
+                  this_month=db.usage_totals("month=?", (month,)),
+                  by_day=db.usage_by("day", 30),
+                  by_model=db.usage_by("model"),
+                  by_chat=db.usage_by("chat_id", 15),
+                  chats={c["id"]: c["title"] for c in db.list_chats(200)},
+                  recent=db.recent_usage(60),
+                  budget=agent.budget_status(),
+                  fmt_usd=pricing.fmt_usd)

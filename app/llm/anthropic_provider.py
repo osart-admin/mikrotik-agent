@@ -4,12 +4,14 @@ from typing import Any
 
 import httpx
 
+from ..pricing import Usage
 from .base import LLMError, Provider, Reply, ToolCall
 
 
 class AnthropicProvider(Provider):
     name = "anthropic"
     default_model = "claude-sonnet-5"
+
 
     def _url(self, path: str) -> str:
         return (self.base_url.rstrip("/") if self.base_url else "https://api.anthropic.com/v1") + path
@@ -43,6 +45,8 @@ class AnthropicProvider(Provider):
             "messages": self._to_wire(messages),
             "tools": [{"name": t["name"], "description": t["description"], "input_schema": t["parameters"]} for t in tools],
         }
+        if not tools:
+            payload.pop("tools")
         async with httpx.AsyncClient(timeout=180) as client:
             resp = await client.post(self._url("/messages"),
                                      headers={"x-api-key": self.api_key, "anthropic-version": "2023-06-01"}, json=payload)
@@ -55,8 +59,15 @@ class AnthropicProvider(Provider):
                 text += block["text"]
             elif block["type"] == "tool_use":
                 calls.append(ToolCall(block["id"], block["name"], block.get("input") or {}))
-        usage = data.get("usage") or {}
-        return Reply(text, calls, usage.get("input_tokens", 0), usage.get("output_tokens", 0), data.get("model", self.model))
+        u = data.get("usage") or {}
+        # Anthropic reports cache reads/writes separately; input_tokens already excludes them.
+        usage = Usage(
+            uncached_input=int(u.get("input_tokens") or 0),
+            cached_input=int(u.get("cache_read_input_tokens") or 0),
+            cache_write=int(u.get("cache_creation_input_tokens") or 0),
+            output=int(u.get("output_tokens") or 0),
+        )
+        return Reply(text, calls, usage, data.get("model", self.model))
 
     async def list_models(self) -> list[str]:
         async with httpx.AsyncClient(timeout=30) as client:
