@@ -1,0 +1,129 @@
+{% extends "base.html" %}{% set page='devices' %}{% block content %}
+<div class="flex between" style="margin-bottom:14px">
+  <div><h2 style="margin:0;font-size:17px">{{ device.name }}
+    {% if device.status=='ok' %}<span class="tag ok">ok</span>{% elif device.status=='new' %}<span class="tag">новое</span>
+    {% else %}<span class="tag err">{{ device.status }}</span>{% endif %}</h2>
+    <div class="muted"><code>{{ device.username }}@{{ device.host }}{% if device.port!=22 %}:{{ device.port }}{% endif %}</code>
+    {% if device.identity %} · identity <b>{{ device.identity }}</b>{% endif %}
+    {% if device.model %} · {{ device.model }}{% endif %}{% if device.ros_version %} · ROS {{ device.ros_version }}{% endif %}
+    {% if device.serial %} · s/n {{ device.serial }}{% endif %}</div></div>
+  <div class="flex">
+    <button class="btn sec" onclick="test()">Проверить связь</button>
+    <button class="btn sec" onclick="collect()">Собрать</button>
+    <a class="btn sec" href="/devices/{{ device.id }}/edit">Изменить</a>
+  </div>
+</div>
+<div id="msg">{% if device.status_message and device.status!='ok' %}<div class="alert err">{{ device.status_message }}</div>{% endif %}</div>
+
+{% if device.auth=='password' or device.status in ('auth_failed','new') %}
+<div class="card"><h2>Онбординг: создать read-only пользователя</h2>
+<p class="muted">Разово подключимся под админом, создадим группу <code>mikrotik-agent-ro</code> (политики <code>ssh,read,test</code> — без <code>write</code> и без <code>sensitive</code>) и зальём публичный ключ агента. Админ-пароль нигде не сохраняется.</p>
+<form onsubmit="return onboard(event)">
+<div class="row">
+<div class="field"><label>Админ-логин</label><input name="admin_user" value="{{ device.username if device.username!='agent' else 'admin' }}" required/></div>
+<div class="field"><label>Админ-пароль</label><input type="password" name="admin_password" required autocomplete="off"/></div>
+</div>
+<div class="row">
+<div class="field"><label>Создать пользователя</label><input name="agent_user" value="agent"/></div>
+<div class="field"><label>Ограничить источник (необязательно)</label><input name="allowed_address" placeholder="10.10.0.54/32"/></div>
+</div>
+<button class="btn">Выполнить онбординг</button>
+</form>
+<div id="onb"></div>
+</div>
+{% endif %}
+
+{% if facts %}
+<div class="grid">
+<div class="card"><h2>Сеть</h2>
+<h3>Адреса</h3><table>{% for a in facts.addresses %}<tr><td><code>{{ a.address }}</code></td><td class="muted">{{ a.interface }}{% if a.comment %} · {{ a.comment }}{% endif %}{% if a.disabled %} <span class="tag">off</span>{% endif %}</td></tr>{% endfor %}</table>
+{% if facts.interfaces.vlan %}<h3>VLAN</h3><table>{% for v in facts.interfaces.vlan %}<tr><td><code>{{ v.name }}</code></td><td class="muted">id {{ v.vlan_id }} на {{ v.interface }}</td></tr>{% endfor %}</table>{% endif %}
+{% if facts.wan_interfaces %}<h3>WAN</h3><p class="muted">{{ facts.wan_interfaces|join(', ') }}</p>{% endif %}
+{% if facts.dhcp_servers %}<h3>DHCP-серверы</h3><table>{% for s in facts.dhcp_servers %}<tr><td><code>{{ s.name }}</code></td><td class="muted">{{ s.interface }} · пул {{ s.pool }}</td></tr>{% endfor %}</table>{% endif %}
+</div>
+<div class="card"><h2>Туннели и маршрутизация</h2>
+{% if facts.tunnels %}<table>{% for t in facts.tunnels %}<tr><td><span class="tag">{{ t.type }}</span></td><td><code>{{ t.interface or '' }}</code> → <code>{{ t.peer or '?' }}</code>{% if t.comment %}<div class="muted">{{ t.comment }}</div>{% endif %}{% if t.disabled %} <span class="tag">off</span>{% endif %}</td></tr>{% endfor %}</table>
+{% else %}<p class="muted">Туннелей нет</p>{% endif %}
+<h3>Маршрутизация</h3><p class="muted">
+{% set r = facts.routing %}{% if r.ospf %}OSPF · {% endif %}{% if r.bgp %}BGP · {% endif %}{% if r.rip %}RIP · {% endif %}
+{{ facts.routes.static }} статических{% if facts.routes.default_gateways %} · шлюз {{ facts.routes.default_gateways|join(', ') }}{% endif %}</p>
+<h3>Файрвол</h3><p class="muted">{{ facts.firewall.filter }} filter · {{ facts.firewall.nat }} nat · {{ facts.firewall.mangle }} mangle · {{ facts.firewall.raw }} raw · {{ facts.firewall.address_lists }} address-list · {{ facts.firewall.ipv6_filter }} ipv6</p>
+{% if facts.services %}<h3>Открытые сервисы</h3><p class="muted">{% for s in facts.services %}{{ s.name }}{% if s.port %}:{{ s.port }}{% endif %}{% if s.address %} ({{ s.address }}){% endif %}{% if not loop.last %} · {% endif %}{% endfor %}</p>{% endif %}
+</div>
+</div>
+{% endif %}
+
+{% if sections %}
+<div class="card"><h2>Конфигурация <span class="muted">{{ device.export_lines }} строк, {{ sections|length }} секций</span>
+<a class="btn sec sm" style="float:right" href="/devices/{{ device.id }}/export" target="_blank">Скачать export</a></h2>
+<div class="row">
+<div style="flex:0 0 280px;max-height:420px;overflow:auto">
+{% for path, n in sections|dictsort %}<div><a href="#" onclick="showSection('{{ path }}');return false" class="muted">{{ path }} <span class="tag">{{ n }}</span></a></div>{% endfor %}
+</div>
+<div style="flex:1"><pre id="sec" style="max-height:420px">Выберите секцию слева</pre></div>
+</div>
+</div>
+{% endif %}
+
+{% if history %}
+<div class="card"><h2>История изменений</h2>
+<table>{% for h in history %}<tr><td><code>{{ h.short }}</code></td><td class="muted">{{ h.date[:16].replace('T',' ') }}</td>
+<td><a href="#" onclick="showDiff('{{ h.sha }}');return false">{{ h.subject[:70] }}</a></td></tr>{% endfor %}</table>
+<pre id="diff" class="diff" style="margin-top:12px;display:none;max-height:400px"></pre>
+</div>
+{% endif %}
+
+<div class="card"><h2>Служебное</h2>
+<p class="muted">Ключ хоста: {% if hostkey %}закреплён <button class="btn sec sm" onclick="forget()">забыть</button>{% else %}будет закреплён при первом подключении{% endif %}</p>
+<details><summary>Публичные ключи агента (для ручной установки)</summary>
+<div class="field"><label>ed25519 (RouterOS 7)</label><pre>{{ pubkeys.ed25519 }}</pre></div>
+<div class="field"><label>RSA (RouterOS 6)</label><pre>{{ pubkeys.rsa }}</pre></div></details>
+</div>
+
+<script id="exportdata" type="text/plain">{{ export or '' }}</script>
+{% endblock %}
+
+{% block script %}<script>
+const EXPORT=document.getElementById('exportdata').textContent;
+function showSection(path){
+  const norm=s=>('/'+s.replace(/^[\s/]+|[\s/]+$/g,'').split(/[\s/]+/).join('/'));
+  const want=norm(path);
+  const lines=EXPORT.split('\n').filter(l=>{
+    const m=l.match(/^(\/[a-z0-9][a-z0-9 \/-]*?)\s+(add|set|remove|enable|disable|print|import)\b/);
+    if(!m)return false; const p=norm(m[1]); return p===want||p.startsWith(want+'/');
+  });
+  document.getElementById('sec').textContent=lines.join('\n')||'(пусто)';
+}
+async function showDiff(sha){
+  const el=document.getElementById('diff'); el.style.display='block'; el.textContent='…';
+  const t=await (await fetch('/devices/{{ device.id }}/diff?commit='+sha)).text();
+  el.innerHTML=t.split('\n').map(l=>{const e=l.replace(/[&<>]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;'}[c]));
+    if(l.startsWith('+')&&!l.startsWith('+++'))return '<span class="a">'+e+'</span>';
+    if(l.startsWith('-')&&!l.startsWith('---'))return '<span class="d">'+e+'</span>';return e;}).join('\n');
+}
+async function test(){
+  document.getElementById('msg').innerHTML='<div class="alert warn">Проверяю…</div>';
+  const r=await post('/api/devices/{{ device.id }}/test');
+  document.getElementById('msg').innerHTML=r.ok
+    ? '<div class="alert ok">OK — '+r.identity+', RouterOS '+r.version+' ('+r.board+')</div>'
+    : '<div class="alert err">'+r.kind+': '+r.message+'</div>';
+}
+async function collect(){
+  document.getElementById('msg').innerHTML='<div class="alert warn">Собираю…</div>';
+  const r=await post('/api/collect?device_id={{ device.id }}');
+  document.getElementById('msg').innerHTML='<div class="alert ok">Готово</div>';
+  setTimeout(()=>location.reload(),700);
+}
+async function forget(){ await post('/api/devices/{{ device.id }}/forget-hostkey'); location.reload(); }
+async function onboard(e){
+  e.preventDefault();
+  const fd=new FormData(e.target);
+  document.getElementById('onb').innerHTML='<div class="alert warn">Выполняю…</div>';
+  const r=await (await fetch('/api/devices/{{ device.id }}/onboard',{method:'POST',body:fd})).json();
+  document.getElementById('onb').innerHTML = r.ok
+    ? '<div class="alert ok">'+r.steps.map(s=>'✓ '+s).join('<br/>')+'</div>'
+    : '<div class="alert err">'+r.message+'</div>';
+  if(r.ok) setTimeout(()=>location.reload(),2500);
+  return false;
+}
+</script>{% endblock %}

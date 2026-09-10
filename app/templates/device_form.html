@@ -1,0 +1,31 @@
+{% extends "base.html" %}{% set page='devices' %}{% block content %}
+<div class="card" style="max-width:640px">
+<h2>{{ 'Изменить устройство' if device else 'Новое устройство' }}</h2>
+<form method="post" action="{{ '/devices/%d/edit'%device.id if device else '/devices/new' }}">
+<div class="field"><label>Название</label><input name="name" value="{{ device.name if device else '' }}" required autofocus/></div>
+<div class="row">
+  <div class="field"><label>Хост / IP</label><input name="host" value="{{ device.host if device else '' }}" required/></div>
+  <div class="field" style="max-width:110px"><label>SSH порт</label><input name="port" type="number" value="{{ device.port if device else 22 }}"/></div>
+</div>
+<div class="row">
+  <div class="field"><label>Пользователь</label><input name="username" value="{{ device.username if device else 'agent' }}"/></div>
+  <div class="field"><label>Аутентификация</label><select name="auth_mode">
+    <option value="key" {{ 'selected' if not device or device.auth=='key' }}>SSH-ключ агента</option>
+    <option value="password" {{ 'selected' if device and device.auth=='password' }}>Пароль</option>
+  </select></div>
+</div>
+<div class="field"><label>Пароль {% if device %}(оставьте пустым — не менять){% endif %}</label><input type="password" name="password" autocomplete="new-password"/></div>
+<div class="row">
+  <div class="field"><label>Площадка</label><input name="site" value="{{ device.site if device else '' }}" placeholder="office / home / warehouse"/></div>
+  <div class="field"><label>Роль</label><input name="role" value="{{ device.role if device else '' }}" placeholder="border / core / ap"/></div>
+</div>
+<div class="field"><label>Заметки</label><textarea name="notes" rows="2">{{ device.notes if device else '' }}</textarea></div>
+{% if device %}<div class="field"><label><input type="checkbox" name="enabled" value="1" style="width:auto" {{ 'checked' if device.enabled }}/> Включено (участвует в сборе)</label></div>{% endif %}
+<div class="flex"><button class="btn">Сохранить</button><a class="btn sec" href="{{ '/devices/%d'%device.id if device else '/' }}">Отмена</a></div>
+</form>
+</div>
+{% if device %}
+<form method="post" action="/devices/{{ device.id }}/delete" onsubmit="return confirm('Удалить устройство и его историю конфигов?')" style="max-width:640px">
+<button class="btn danger">Удалить устройство</button></form>
+{% endif %}
+{% endblock %}

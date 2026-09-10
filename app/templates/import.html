@@ -1,0 +1,43 @@
+{% extends "base.html" %}{% set page='devices' %}{% block content %}
+<div class="card">
+<h2>Импорт адресной книги Winbox</h2>
+<p class="muted">Файл лежит по пути <code>~/Library/Application Support/MikroTik/WinBox/Addresses.cdb</code> (macOS)
+или <code>%APPDATA%\MikroTik\Winbox\Addresses.cdb</code> (Windows). Формат недокументирован — после разбора
+проверьте, что колонки определились верно, и отметьте нужные строки.</p>
+<form method="post" action="/import" enctype="multipart/form-data" class="row">
+<div class="field" style="flex:3"><label>Файл Addresses.cdb</label><input type="file" name="file" required/></div>
+<div class="field" style="flex:0 0 130px"><label>&nbsp;</label><button class="btn" style="width:100%">Разобрать</button></div>
+</form>
+</div>
+
+{% if parsed %}
+{% if fallback %}<div class="alert warn">Структурный разбор не сработал — используется извлечение строк. Проверьте колонки особенно внимательно.</div>{% endif %}
+<div class="card">
+<h2>Найдено записей: {{ count }}</h2>
+<form method="post" action="/import/confirm">
+<h3>Какое поле чем является</h3>
+<div class="row">
+{% for key in ['host','login','password','note'] %}
+<div class="field"><label>{{ {'host':'Хост','login':'Логин','password':'Пароль','note':'Название'}[key] }}</label>
+<select name="{{ key }}"><option value="">—</option>
+{% for i in field_ids %}<option value="{{ i }}" {{ 'selected' if mapping[key]==i }}>поле {{ i }}: {{ samples[i][:2]|join(' / ') }}</option>{% endfor %}
+</select></div>
+{% endfor %}
+<div class="field"><label>Площадка для всех</label><input name="site" placeholder="office"/></div>
+</div>
+<h3>Что импортировать</h3>
+<table>
+<tr><th><input type="checkbox" onclick="document.querySelectorAll('.sel').forEach(c=>c.checked=this.checked)" style="width:auto"/></th>
+<th>Хост</th><th>Логин</th><th>Пароль</th><th>Название</th></tr>
+{% for r in rows %}
+<tr><td><input class="sel" type="checkbox" name="select" value="{{ loop.index0 }}" {{ '' if r.is_mac else 'checked' }} {{ 'disabled' if r.is_mac }} style="width:auto"/></td>
+<td><code>{{ r.host }}</code>{% if r.is_mac %} <span class="tag warn">MAC — SSH не подойдёт</span>{% endif %}</td>
+<td class="muted">{{ r.login }}</td><td class="muted">{{ '••••' if r.password else '—' }}</td><td class="muted">{{ r.note }}</td></tr>
+{% endfor %}
+</table>
+<p class="muted" style="margin-top:10px">Пароли сохранятся зашифрованными и нужны только для онбординга — после него устройство переходит на ключ.</p>
+<button class="btn">Импортировать отмеченные</button>
+</form>
+</div>
+{% endif %}
+{% endblock %}

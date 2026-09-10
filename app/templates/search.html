@@ -1,0 +1,11 @@
+{% extends "base.html" %}{% set page='search' %}{% block content %}
+<div class="card">
+<h2>Поиск по всем конфигам</h2>
+<form method="get" action="/search" class="row">
+<div class="field" style="flex:3"><label>Регулярное выражение</label><input name="q" value="{{ q }}" autofocus placeholder="10\.10\.4\.  |  wireguard  |  vlan-id=20"/></div>
+<div class="field" style="flex:0 0 120px"><label>Контекст</label><input name="context" type="number" min="0" max="3" value="{{ context }}"/></div>
+<div class="field" style="flex:0 0 110px"><label>&nbsp;</label><button class="btn" style="width:100%">Искать</button></div>
+</form>
+</div>
+{% if q %}<div class="card"><pre style="max-height:600px">{{ result }}</pre></div>{% endif %}
+{% endblock %}

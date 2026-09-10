@@ -1,0 +1,67 @@
+{% extends "base.html" %}{% set page='devices' %}{% block content %}
+<div class="flex between" style="margin-bottom:14px">
+  <h2 style="margin:0;font-size:17px">Устройства <span class="muted">({{ devices|length }})</span></h2>
+  <div class="flex">
+    <span class="muted" id="sched">{% if next_run %}след. сбор {{ next_run[11:16] }}{% else %}автосбор выключен{% endif %}</span>
+    <button class="btn sec" onclick="collect()" id="cbtn">Собрать всё</button>
+    <a class="btn sec" href="/import">Импорт из Winbox</a>
+    <a class="btn" href="/devices/new">+ Устройство</a>
+  </div>
+</div>
+<div id="msg"></div>
+
+{% if not devices %}
+<div class="card"><p class="muted">Пока пусто. Добавьте роутер вручную или импортируйте адресную книгу Winbox.</p></div>
+{% else %}
+<div class="card" style="padding:0;overflow:auto">
+<table>
+<tr><th>Устройство</th><th>Адрес</th><th>Модель / ROS</th><th>Сеть</th><th>Туннели</th><th>Статус</th><th>Собран</th><th></th></tr>
+{% for d in devices %}
+<tr>
+  <td><a href="/devices/{{ d.id }}"><b>{{ d.name }}</b></a>
+      {% if d.site %}<div class="muted">{{ d.site }}{% if d.role %} · {{ d.role }}{% endif %}</div>{% endif %}
+      {% if not d.enabled %}<span class="tag">выключено</span>{% endif %}</td>
+  <td><code>{{ d.host }}{% if d.port != 22 %}:{{ d.port }}{% endif %}</code><div class="muted">{{ d.username }} · {{ 'ключ' if d.auth=='key' else 'пароль' }}</div></td>
+  <td>{{ d.model or d.board or '—' }}<div class="muted">{{ d.ros_version or '' }}</div></td>
+  <td class="muted">{% if d.facts %}{{ d.facts.subnets[:3]|join(', ') }}{% if d.facts.subnets|length > 3 %} +{{ d.facts.subnets|length - 3 }}{% endif %}
+      {% if d.facts.interfaces.vlan %}<div>{{ d.facts.interfaces.vlan|length }} VLAN</div>{% endif %}{% endif %}</td>
+  <td class="muted">{% if d.facts %}{% for t in d.facts.tunnels[:3] %}<div>{{ t.type }} → {{ t.peer or '?' }}</div>{% endfor %}{% endif %}</td>
+  <td>{% if d.status=='ok' %}<span class="tag ok">ok</span>
+      {% elif d.status=='new' %}<span class="tag">новое</span>
+      {% else %}<span class="tag err" title="{{ d.status_message }}">{{ d.status }}</span>{% endif %}</td>
+  <td class="muted">{{ d.last_collected[5:16].replace('T',' ') if d.last_collected else '—' }}
+      {% if d.export_lines %}<div>{{ d.export_lines }} строк</div>{% endif %}</td>
+  <td><button class="btn sec sm" onclick="collect({{ d.id }})">↻</button></td>
+</tr>
+{% endfor %}
+</table>
+</div>
+{% endif %}
+
+{% if runs %}
+<div class="card"><h2>Последние сборы</h2>
+<table>
+<tr><th>#</th><th>Начало</th><th>Триггер</th><th>Успешно</th><th>Ошибок</th><th>Изменилось</th></tr>
+{% for r in runs %}
+<tr><td><a href="/runs">{{ r.id }}</a></td><td class="muted">{{ r.started_at[5:16].replace('T',' ') }}</td>
+<td class="muted">{{ r.trigger }}</td><td>{{ r.ok_count }}</td>
+<td>{% if r.fail_count %}<span class="tag err">{{ r.fail_count }}</span>{% else %}0{% endif %}</td>
+<td>{% if r.changed_count %}<span class="tag warn">{{ r.changed_count }}</span>{% else %}0{% endif %}</td></tr>
+{% endfor %}
+</table></div>
+{% endif %}
+{% endblock %}
+
+{% block script %}<script>
+async function collect(id){
+  const b=document.getElementById('cbtn'); if(b) {b.disabled=true; b.textContent='Собираю…';}
+  document.getElementById('msg').innerHTML='<div class="alert warn">Сбор запущен…</div>';
+  try{
+    const r=await post('/api/collect'+(id?('?device_id='+id):''));
+    if(r.skipped){document.getElementById('msg').innerHTML='<div class="alert warn">'+r.reason+'</div>';}
+    else{document.getElementById('msg').innerHTML='<div class="alert ok">Готово: '+r.ok+' ok, '+r.failed+' ошибок, изменилось: '+(r.changed.length?r.changed.join(', '):'нет')+'</div>';
+         setTimeout(()=>location.reload(),900);}
+  }catch(e){document.getElementById('msg').innerHTML='<div class="alert err">'+e+'</div>';}
+  if(b){b.disabled=false;b.textContent='Собрать всё';}
+}
+</script>{% endblock %}

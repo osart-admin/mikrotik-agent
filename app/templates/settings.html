@@ -1,0 +1,72 @@
+{% extends "base.html" %}{% set page='settings' %}{% block content %}
+{% if imported %}<div class="alert ok">Импортировано устройств: {{ imported }}</div>{% endif %}
+
+<div class="card">
+<h2>Модель</h2>
+<form method="post" action="/settings/llm">
+<div class="row">
+<div class="field"><label>Провайдер</label><select name="provider" id="prov" onchange="syncProv()">
+{% for p in keys %}<option value="{{ p }}" {{ 'selected' if p==provider }}>{{ p }}</option>{% endfor %}
+</select></div>
+<div class="field"><label>Модель</label><input name="model" id="model" value="{{ models[provider] }}" placeholder="gpt-4.1 / claude-sonnet-5"/></div>
+</div>
+<div class="field"><label>API-ключ {% if keys[provider] %}<span class="tag ok">сохранён</span>{% else %}<span class="tag err">не задан</span>{% endif %}</label>
+<input type="password" name="api_key" placeholder="{{ 'оставьте пустым — не менять' if keys[provider] else 'sk-...' }}" autocomplete="off"/></div>
+<div class="field"><label>Base URL (необязательно — для прокси или совместимого API)</label><input name="base_url" id="baseurl" value="{{ base_urls[provider] }}" placeholder="https://api.openai.com/v1"/></div>
+<div class="flex"><button class="btn">Сохранить</button>
+<button type="button" class="btn sec" onclick="testLLM()">Проверить ключ</button></div>
+</form>
+{% if keys[provider] %}<form method="post" action="/settings/llm/delete-key" style="margin-top:8px">
+<input type="hidden" name="provider" value="{{ provider }}"/>
+<button class="btn danger sm">Удалить ключ {{ provider }}</button></form>{% endif %}
+<div id="llmmsg" style="margin-top:10px"></div>
+<p class="muted" style="margin-top:10px">Ключ шифруется (Fernet) и хранится в <code>/data</code>. Конфиги проходят через скраббер — пароли, PSK и приватные ключи заменяются на <code>&lt;hidden&gt;</code> до отправки в модель.</p>
+</div>
+
+<div class="card">
+<h2>Автосбор</h2>
+<form method="post" action="/settings/schedule" class="row">
+<div class="field"><label>Интервал, минут (0 — выключить)</label><input name="interval" type="number" min="0" value="{{ interval }}"/></div>
+<div class="field" style="flex:0 0 130px"><label>&nbsp;</label><button class="btn" style="width:100%">Сохранить</button></div>
+</form>
+<p class="muted">{% if next_run %}Следующий запуск: {{ next_run[:16].replace('T',' ') }}{% else %}Автосбор выключен — собирайте вручную со страницы устройств.{% endif %}</p>
+</div>
+
+<div class="card">
+<h2>SSH-ключи агента</h2>
+<p class="muted">Онбординг заливает нужный ключ автоматически. Здесь — на случай ручной установки: <code>/user ssh-keys import user=agent public-key-file=…</code></p>
+<div class="field"><label>ed25519 — RouterOS 7</label><pre>{{ pubkeys.ed25519 }}</pre></div>
+<div class="field"><label>RSA 4096 — RouterOS 6 (ed25519 там не поддерживается)</label><pre>{{ pubkeys.rsa }}</pre></div>
+</div>
+
+<div class="card">
+<h2>Пользователи UI</h2>
+<table><tr><th>Логин</th><th>Роль</th><th>Создан</th><th></th></tr>
+{% for u in users %}<tr><td>{{ u.username }}</td><td class="muted">{{ u.role }}</td><td class="muted">{{ u.created_at[:10] }}</td>
+<td>{% if u.id != user.id %}<form method="post" action="/settings/users/{{ u.id }}/delete" onsubmit="return confirm('Удалить пользователя?')"><button class="btn danger sm">удалить</button></form>{% endif %}</td></tr>{% endfor %}
+</table>
+<form method="post" action="/settings/users" class="row" style="margin-top:12px">
+<div class="field"><label>Логин</label><input name="username" required/></div>
+<div class="field"><label>Пароль</label><input type="password" name="password" required/></div>
+<div class="field" style="flex:0 0 130px"><label>&nbsp;</label><button class="btn" style="width:100%">Добавить</button></div>
+</form>
+</div>
+
+<div class="card"><h2>Журнал действий</h2>
+<table><tr><th>Время</th><th>Кто</th><th>Действие</th><th>Детали</th></tr>
+{% for a in audit %}<tr><td class="muted">{{ a.ts[5:16].replace('T',' ') }}</td><td class="muted">{{ a.username }}</td>
+<td><code>{{ a.action }}</code></td><td class="muted">{{ a.details[:100] }}</td></tr>{% endfor %}
+</table></div>
+{% endblock %}
+
+{% block script %}<script>
+const MODELS={{ models|tojson }}, BASEURLS={{ base_urls|tojson }};
+function syncProv(){const p=document.getElementById('prov').value;
+  document.getElementById('model').value=MODELS[p]||'';document.getElementById('baseurl').value=BASEURLS[p]||'';}
+async function testLLM(){
+  const el=document.getElementById('llmmsg'); el.innerHTML='<div class="alert warn">Проверяю…</div>';
+  const r=await post('/api/settings/llm/test');
+  el.innerHTML=r.ok?'<div class="alert ok">OK — '+r.model+' ответила «'+r.reply+'» ('+r.tokens+' токенов)</div>'
+                   :'<div class="alert err">'+r.message+'</div>';
+}
+</script>{% endblock %}

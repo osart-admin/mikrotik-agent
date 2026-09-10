@@ -1,0 +1,13 @@
+{% extends "base.html" %}{% block content %}
+<div class="auth"><div class="card">
+<h2>Первый запуск</h2>
+<p class="muted">Создайте администратора. Сервис хранит SSH-ключи ко всем роутерам, поэтому доступ закрыт паролем.</p>
+{% if error %}<div class="alert err">{{ error }}</div>{% endif %}
+<form method="post" action="/setup">
+<div class="field"><label>Логин</label><input name="username" value="admin" autofocus required/></div>
+<div class="field"><label>Пароль (мин. 8 символов)</label><input type="password" name="password" required/></div>
+<div class="field"><label>Повторите пароль</label><input type="password" name="password2" required/></div>
+<button class="btn" style="width:100%">Создать</button>
+</form>
+</div></div>
+{% endblock %}

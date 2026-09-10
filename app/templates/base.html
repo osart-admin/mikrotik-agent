@@ -1,0 +1,90 @@
+<!doctype html>
+<html lang="ru">
+<head>
+<meta charset="utf-8"/>
+<meta name="viewport" content="width=device-width, initial-scale=1"/>
+<title>{{ title if title else "MikroTik AI Agent" }}</title>
+<script>
+(function(){try{var t=localStorage.getItem('theme');document.documentElement.setAttribute('data-theme',t==='light'?'light':'dark');}catch(e){}})();
+</script>
+<style>
+:root{--bg:#f6f7f9;--card:#fff;--hover:#f9fafb;--input:#fff;--border:#e5e7eb;--border2:#eee;
+--text:#111827;--text2:#374151;--muted:#6b7280;--btn:#111827;--btn-t:#fff;--accent:#2563eb;
+--ok-bg:#d1fae5;--ok-b:#6ee7b7;--ok-t:#065f46;--err-bg:#fee2e2;--err-b:#fca5a5;--err-t:#991b1b;
+--warn-bg:#fef3c7;--warn-b:#fcd34d;--warn-t:#92400e;--code:#f3f4f6;--add:#dcfce7;--del:#fee2e2;}
+[data-theme=dark]{--bg:#0f1115;--card:#171a21;--hover:#1c2029;--input:#1c2029;--border:#2a2f3a;--border2:#232833;
+--text:#e5e7eb;--text2:#cbd5e1;--muted:#8b95a5;--btn:#2563eb;--btn-t:#fff;--accent:#60a5fa;
+--ok-bg:#052e22;--ok-b:#065f46;--ok-t:#6ee7b7;--err-bg:#3b1113;--err-b:#7f1d1d;--err-t:#fca5a5;
+--warn-bg:#3a2c07;--warn-b:#78350f;--warn-t:#fcd34d;--code:#11141a;--add:#062e1c;--del:#3b1113;}
+*{box-sizing:border-box}
+body{margin:0;background:var(--bg);color:var(--text);font:14px/1.5 -apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,sans-serif}
+a{color:var(--accent);text-decoration:none}a:hover{text-decoration:underline}
+header{background:var(--card);border-bottom:1px solid var(--border);padding:0 16px;position:sticky;top:0;z-index:10}
+header .in{max-width:1400px;margin:0 auto;display:flex;align-items:center;gap:18px;height:52px}
+header .logo{font-weight:600;font-size:15px;color:var(--text)}
+header nav{display:flex;gap:14px;flex:1}
+header nav a{color:var(--text2);font-size:13px;padding:4px 0;border-bottom:2px solid transparent}
+header nav a.on{color:var(--text);border-bottom-color:var(--accent)}
+main{max-width:1400px;margin:0 auto;padding:20px 16px 60px}
+.card{background:var(--card);border:1px solid var(--border);border-radius:10px;padding:16px;margin-bottom:16px}
+.card h2{margin:0 0 12px;font-size:15px;font-weight:600}
+.card h3{margin:16px 0 8px;font-size:13px;font-weight:600;color:var(--text2)}
+table{width:100%;border-collapse:collapse;font-size:13px}
+th{text-align:left;font-weight:600;color:var(--muted);font-size:11px;text-transform:uppercase;letter-spacing:.04em;padding:6px 8px;border-bottom:1px solid var(--border)}
+td{padding:8px;border-bottom:1px solid var(--border2);vertical-align:top}
+tr:hover td{background:var(--hover)}
+.btn{display:inline-block;background:var(--btn);color:var(--btn-t);border:1px solid transparent;border-radius:7px;padding:7px 13px;font-size:13px;cursor:pointer;font-family:inherit}
+.btn:hover{opacity:.9;text-decoration:none}
+.btn.sec{background:var(--card);color:var(--text);border-color:var(--border)}
+.btn.danger{background:transparent;color:#dc2626;border-color:var(--border)}
+.btn:disabled{opacity:.5;cursor:not-allowed}
+.btn.sm{padding:4px 9px;font-size:12px}
+input,select,textarea{background:var(--input);color:var(--text);border:1px solid var(--border);border-radius:7px;padding:7px 10px;font:inherit;font-size:13px;width:100%}
+input:focus,select:focus,textarea:focus{outline:none;border-color:var(--accent)}
+label{display:block;font-size:12px;color:var(--muted);margin-bottom:4px}
+.field{margin-bottom:12px}
+.row{display:flex;gap:12px;flex-wrap:wrap}.row>*{flex:1;min-width:160px}
+.tag{display:inline-block;padding:1px 7px;border-radius:20px;font-size:11px;border:1px solid var(--border);color:var(--muted)}
+.tag.ok{background:var(--ok-bg);border-color:var(--ok-b);color:var(--ok-t)}
+.tag.err{background:var(--err-bg);border-color:var(--err-b);color:var(--err-t)}
+.tag.warn{background:var(--warn-bg);border-color:var(--warn-b);color:var(--warn-t)}
+pre{background:var(--code);border:1px solid var(--border);border-radius:8px;padding:12px;overflow:auto;font:12px/1.45 ui-monospace,SFMono-Regular,Menlo,monospace;margin:0}
+code{font-family:ui-monospace,SFMono-Regular,Menlo,monospace;font-size:12px;background:var(--code);padding:1px 5px;border-radius:4px}
+.muted{color:var(--muted);font-size:12px}
+.alert{padding:10px 12px;border-radius:8px;margin-bottom:14px;font-size:13px;border:1px solid}
+.alert.err{background:var(--err-bg);border-color:var(--err-b);color:var(--err-t)}
+.alert.ok{background:var(--ok-bg);border-color:var(--ok-b);color:var(--ok-t)}
+.alert.warn{background:var(--warn-bg);border-color:var(--warn-b);color:var(--warn-t)}
+.flex{display:flex;align-items:center;gap:10px}.between{justify-content:space-between}
+.grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(300px,1fr));gap:12px}
+.auth{max-width:380px;margin:80px auto}
+.diff .a{background:var(--add)}.diff .d{background:var(--del)}
+details summary{cursor:pointer;font-size:13px;color:var(--text2);padding:4px 0}
+@media(max-width:700px){header nav{overflow-x:auto}main{padding:14px 10px 40px}}
+{% block style %}{% endblock %}
+</style>
+</head>
+<body>
+{% if user %}
+<header><div class="in">
+<span class="logo">MikroTik AI</span>
+<nav>
+<a href="/" class="{{ 'on' if page=='devices' }}">Устройства</a>
+<a href="/chat" class="{{ 'on' if page=='chat' }}">Чат</a>
+<a href="/search" class="{{ 'on' if page=='search' }}">Поиск</a>
+<a href="/runs" class="{{ 'on' if page=='runs' }}">Сборы</a>
+<a href="/settings" class="{{ 'on' if page=='settings' }}">Настройки</a>
+</nav>
+<button class="btn sec sm" onclick="toggleTheme()">◐</button>
+<span class="muted">{{ user.username }}</span>
+<a href="/logout" class="muted">выйти</a>
+</div></header>
+{% endif %}
+<main>{% block content %}{% endblock %}</main>
+<script>
+function toggleTheme(){var d=document.documentElement,n=d.getAttribute('data-theme')==='dark'?'light':'dark';d.setAttribute('data-theme',n);try{localStorage.setItem('theme',n)}catch(e){}}
+function post(url,body){return fetch(url,{method:'POST',headers:{'Content-Type':'application/json'},body:body?JSON.stringify(body):null}).then(r=>r.json())}
+</script>
+{% block script %}{% endblock %}
+</body>
+</html>
