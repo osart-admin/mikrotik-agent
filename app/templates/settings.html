@@ -1,18 +1,30 @@
-{% extends "base.html" %}{% set page='settings' %}{% block content %}
+{% extends "base.html" %}{% set page='settings' %}
+{% block style %}
+/* Mask the API key without using type=password, which is what triggers credential autofill. */
+input.secret{-webkit-text-security:disc;text-security:disc;font-family:ui-monospace,Menlo,monospace}
+{% endblock %}
+{% block content %}
 {% if imported %}<div class="alert ok">Импортировано устройств: {{ imported }}</div>{% endif %}
+{% if error %}<div class="alert err">{{ error }}</div>{% endif %}
 
 <div class="card">
 <h2>Модель</h2>
-<form method="post" action="/settings/llm">
+<form method="post" action="/settings/llm" autocomplete="off">
+{# Browsers treat any type=password field as a login form and autofill the preceding text input
+   with the saved username. That put the UI login into "model" and the UI password into the API
+   key box. The key field is therefore a plain text input masked with CSS, not a real password
+   field, plus the usual opt-outs for the common password managers. #}
+<input type="text" name="_nofill_u" style="display:none" tabindex="-1" aria-hidden="true"/>
+<input type="password" name="_nofill_p" style="display:none" tabindex="-1" aria-hidden="true"/>
 <div class="row">
 <div class="field"><label>Провайдер</label><select name="provider" id="prov" onchange="syncProv()">
 {% for p in keys %}<option value="{{ p }}" {{ 'selected' if p==provider }}>{{ p }}</option>{% endfor %}
 </select></div>
-<div class="field"><label>Модель</label><input name="model" id="model" value="{{ models[provider] }}" placeholder="gpt-4.1 / claude-sonnet-5"/></div>
+<div class="field"><label>Модель</label><input name="model" id="model" value="{{ models[provider] }}" placeholder="gpt-4.1 / claude-sonnet-5" autocomplete="off" data-1p-ignore data-lpignore="true" data-bwignore spellcheck="false"/></div>
 </div>
 <div class="field"><label>API-ключ {% if keys[provider] %}<span class="tag ok">сохранён</span>{% else %}<span class="tag err">не задан</span>{% endif %}</label>
-<input type="password" name="api_key" placeholder="{{ 'оставьте пустым — не менять' if keys[provider] else 'sk-...' }}" autocomplete="off"/></div>
-<div class="field"><label>Base URL (необязательно — для прокси или совместимого API)</label><input name="base_url" id="baseurl" value="{{ base_urls[provider] }}" placeholder="https://api.openai.com/v1"/></div>
+<input type="text" class="secret" name="api_key" placeholder="{{ 'оставьте пустым — не менять' if keys[provider] else 'sk-...' }}" autocomplete="off" data-1p-ignore data-lpignore="true" data-bwignore spellcheck="false" autocapitalize="off" autocorrect="off"/></div>
+<div class="field"><label>Base URL (необязательно — для прокси или совместимого API)</label><input name="base_url" id="baseurl" value="{{ base_urls[provider] }}" placeholder="https://api.openai.com/v1" autocomplete="off" data-1p-ignore data-lpignore="true" spellcheck="false"/></div>
 <div class="flex"><button class="btn">Сохранить</button>
 <button type="button" class="btn sec" onclick="testLLM()">Проверить ключ</button></div>
 </form>

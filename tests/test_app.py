@@ -88,3 +88,30 @@ def test_chat_without_api_key_reports_config_error(logged_in):
 def test_search_page_without_devices(logged_in):
     r = logged_in.get("/search", params={"q": "wireguard"})
     assert r.status_code == 200 and "No matches" in r.text
+
+
+def test_ui_password_is_rejected_as_api_key(logged_in):
+    """Browser autofill used to drop the UI login password into the API key field."""
+    r = logged_in.post("/settings/llm", data={"provider": "openai", "model": "admin",
+                                              "base_url": "", "api_key": "testpass123"})
+    assert r.status_code == 200
+    assert "совпадает с вашим паролем" in r.text
+    assert not db.has_secret("openai_api_key")
+
+
+def test_real_api_key_is_stored(logged_in):
+    logged_in.post("/settings/llm", data={"provider": "openai", "model": "gpt-4.1",
+                                          "base_url": "", "api_key": "sk-test-not-a-real-key"})
+    assert db.has_secret("openai_api_key")
+    assert db.get_setting("openai_model") == "gpt-4.1"
+    logged_in.post("/settings/llm/delete-key", data={"provider": "openai"})
+    assert not db.has_secret("openai_api_key")
+
+
+def test_settings_form_does_not_expose_a_password_field(logged_in):
+    """A type=password input is exactly what makes Chrome treat this as a login form."""
+    html = logged_in.get("/settings").text
+    form = html.split('action="/settings/llm"')[1].split("</form>")[0]
+    assert 'name="api_key"' in form
+    assert 'type="password" name="api_key"' not in form
+    assert 'autocomplete="off"' in form

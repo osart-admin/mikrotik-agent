@@ -371,7 +371,7 @@ async def chat_send(request: Request, chat_id: int):
 # ---------------------------------------------------------------- settings
 
 @app.get("/settings", response_class=HTMLResponse)
-async def settings_page(request: Request, imported: int = 0):
+async def settings_page(request: Request, imported: int = 0, error: str = ""):
     provider = db.get_setting("llm_provider", "openai")
     return render(request, "settings.html", provider=provider,
                   models={p: db.get_setting(f"{p}_model", "") or "" for p in llm.PROVIDERS},
@@ -380,7 +380,7 @@ async def settings_page(request: Request, imported: int = 0):
                   interval=db.get_setting("collect_interval_minutes", "0"),
                   next_run=scheduler.next_run(), pubkeys=collector.public_keys(),
                   users=[dict(u) for u in db.list_users()], audit=[dict(a) for a in db.list_audit(50)],
-                  imported=imported)
+                  imported=imported, error=error)
 
 
 @app.post("/settings/llm")
@@ -389,11 +389,20 @@ async def settings_llm(request: Request, provider: str = Form("openai"), model: 
     user = auth.require_user(request)
     if provider not in llm.PROVIDERS:
         raise HTTPException(400, "unknown provider")
+    api_key, model, base_url = api_key.strip(), model.strip(), base_url.strip()
+
+    # Browsers used to autofill this form as if it were a login (see settings.html). Catch the
+    # accident server-side too: storing the operator's own UI password as an API key would leak
+    # it to the LLM provider on the next request.
+    row = db.get_user(user["username"])
+    if api_key and row is not None and auth.verify_password(api_key, row["password_hash"]):
+        return await settings_page(request, error="Введённый API-ключ совпадает с вашим паролем от этого интерфейса — похоже, поле заполнил браузер. Ключ не сохранён.")
+
     db.set_setting("llm_provider", provider)
-    db.set_setting(f"{provider}_model", model.strip())
-    db.set_setting(f"{provider}_base_url", base_url.strip())
-    if api_key.strip():
-        db.set_secret(f"{provider}_api_key", api_key.strip())
+    db.set_setting(f"{provider}_model", model)
+    db.set_setting(f"{provider}_base_url", base_url)
+    if api_key:
+        db.set_secret(f"{provider}_api_key", api_key)
         db.audit(user["username"], "api_key_set", provider)
     db.audit(user["username"], "llm_settings", f"{provider} {model}")
     return RedirectResponse("/settings", status_code=303)
