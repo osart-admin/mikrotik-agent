@@ -167,7 +167,13 @@ class RouterSSH:
         except asyncio.TimeoutError as exc:
             raise SSHError("timeout", f"connect timeout to {self.host}:{self.port}") from exc
         except asyncssh.PermissionDenied as exc:
-            raise SSHError("auth_failed", f"authentication failed for {self.creds.username}: {exc}") from exc
+            how = "паролем" if self.creds.password else "по ключу"
+            hint = ("проверьте пароль от РОУТЕРА (браузер мог подставить пароль от этого интерфейса). "
+                    "RouterOS также временно блокирует пользователя после нескольких быстрых неудачных "
+                    "попыток — подождите пару минут перед повтором."
+                    if self.creds.password else
+                    "ключ агента ещё не установлен на устройстве — выполните онбординг или установите ключ вручную.")
+            raise SSHError("auth_failed", f"вход {how} для «{self.creds.username}» отклонён: {hint}") from exc
         except asyncssh.HostKeyNotVerifiable as exc:
             raise SSHError("hostkey", f"host key mismatch for {self.host}:{self.port} ({exc}); forget the host key if the router was reinstalled") from exc
         except (asyncssh.KeyExchangeFailed, asyncssh.ProtocolError) as exc:

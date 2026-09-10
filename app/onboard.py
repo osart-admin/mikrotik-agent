@@ -16,6 +16,23 @@ GROUP = "mikrotik-agent-ro"
 GROUP_POLICY = "ssh,read,test"
 
 
+def manual_script(agent_user: str, pubkey: str, key_kind: str, allowed_address: str = "") -> str:
+    """The same steps onboard() performs, as commands to paste into the router's terminal.
+
+    Offered because the automated path needs the router's admin password, which the operator may
+    not want to type into a web form - and which browsers like to autofill wrongly.
+    """
+    addr = f" address={allowed_address}" if allowed_address else ""
+    fname = f"{agent_user}-{key_kind}.pub"
+    return "\n".join([
+        f"/user group add name={GROUP} policy={GROUP_POLICY}",
+        f'/user add name={agent_user} group={GROUP}{addr} password="{pysecrets.token_urlsafe(24)}"',
+        f'/file add name="{fname}" contents="{pubkey}"',
+        f"/user ssh-keys import user={agent_user} public-key-file={fname}",
+        f'/file remove [ find name="{fname}" ]',
+    ])
+
+
 async def _put_file(r: RouterSSH, name: str, content: str, major: int) -> None:
     try:
         await r.upload_text(name, content)

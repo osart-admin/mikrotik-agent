@@ -178,3 +178,39 @@ def test_model_prices_are_editable(logged_in):
     assert db.get_model("gpt-5.6-luna")["input"] == 0.25
     logged_in.post("/settings/models/reset")
     assert db.get_model("gpt-5.6-luna")["input"] == 0.20
+
+
+def test_onboarding_form_has_no_password_field(logged_in):
+    """Chrome autofilled the UI login into the router-admin fields; a masked text input avoids it."""
+    logged_in.post("/devices/new", data={"name": "Autofill Probe", "host": "192.0.2.55",
+                                         "port": "22", "username": "admin", "auth_mode": "password"})
+    dev = db.get_device_by_slug("autofill-probe")
+    html = logged_in.get(f"/devices/{dev['id']}").text
+    form = html.split("onboard(event)")[1].split("</form>")[0]
+    assert 'name="admin_password"' in form
+    assert 'type="password" name="admin_password"' not in form
+    assert 'class="secret" name="admin_password"' in form
+    logged_in.post(f"/devices/{dev['id']}/delete")
+
+
+def test_manual_script_matches_the_automated_path(logged_in):
+    from app import collector, onboard as ob
+
+    pub = collector.public_keys()["ed25519"]
+    script = ob.manual_script("agent", pub, "ed25519", "10.10.0.54/32")
+    assert f"/user group add name={ob.GROUP} policy={ob.GROUP_POLICY}" in script
+    assert "write" not in ob.GROUP_POLICY and "sensitive" not in ob.GROUP_POLICY
+    assert "address=10.10.0.54/32" in script
+    assert pub in script
+    assert "/user ssh-keys import user=agent" in script
+    assert script.count("\n") == 4
+
+
+def test_device_page_offers_the_manual_script(logged_in):
+    logged_in.post("/devices/new", data={"name": "Manual Probe", "host": "192.0.2.56",
+                                         "port": "22", "username": "agent", "auth_mode": "key"})
+    dev = db.get_device_by_slug("manual-probe")
+    html = logged_in.get(f"/devices/{dev['id']}").text
+    assert "/user ssh-keys import user=agent" in html
+    assert "mikrotik-agent-ro" in html
+    logged_in.post(f"/devices/{dev['id']}/delete")

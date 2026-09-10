@@ -1,8 +1,4 @@
 {% extends "base.html" %}{% set page='settings' %}
-{% block style %}
-/* Mask the API key without using type=password, which is what triggers credential autofill. */
-input.secret{-webkit-text-security:disc;text-security:disc;font-family:ui-monospace,Menlo,monospace}
-{% endblock %}
 {% block content %}
 {% if imported %}<div class="alert ok">Импортировано устройств: {{ imported }}</div>{% endif %}
 {% if error %}<div class="alert err">{{ error }}</div>{% endif %}

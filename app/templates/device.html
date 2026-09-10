@@ -18,10 +18,16 @@
 {% if device.auth=='password' or device.status in ('auth_failed','new') %}
 <div class="card"><h2>Онбординг: создать read-only пользователя</h2>
 <p class="muted">Разово подключимся под админом, создадим группу <code>mikrotik-agent-ro</code> (политики <code>ssh,read,test</code> — без <code>write</code> и без <code>sensitive</code>) и зальём публичный ключ агента. Админ-пароль нигде не сохраняется.</p>
-<form onsubmit="return onboard(event)">
+<form onsubmit="return onboard(event)" autocomplete="off">
+{# A type=password field makes the browser treat this as a login form and autofill the UI
+   credentials, which are not the router's. Same masked-text-input trick as the settings page. #}
+<input type="text" name="_nofill_u" style="display:none" tabindex="-1" aria-hidden="true"/>
+<input type="password" name="_nofill_p" style="display:none" tabindex="-1" aria-hidden="true"/>
 <div class="row">
-<div class="field"><label>Админ-логин</label><input name="admin_user" value="{{ device.username if device.username!='agent' else 'admin' }}" required/></div>
-<div class="field"><label>Админ-пароль</label><input type="password" name="admin_password" required autocomplete="off"/></div>
+<div class="field"><label>Админ-логин <span class="muted">— от роутера, не от этого интерфейса</span></label>
+<input name="admin_user" value="{{ device.username if device.username!='agent' else 'admin' }}" required autocomplete="off" data-1p-ignore data-lpignore="true" data-bwignore spellcheck="false"/></div>
+<div class="field"><label>Админ-пароль <span class="muted">— от роутера</span></label>
+<input type="text" class="secret" name="admin_password" required autocomplete="off" data-1p-ignore data-lpignore="true" data-bwignore spellcheck="false" autocapitalize="off" autocorrect="off"/></div>
 </div>
 <div class="row">
 <div class="field"><label>Создать пользователя</label><input name="agent_user" value="agent"/></div>
@@ -75,9 +81,17 @@
 
 <div class="card"><h2>Служебное</h2>
 <p class="muted">Ключ хоста: {% if hostkey %}закреплён <button class="btn sec sm" onclick="forget()">забыть</button>{% else %}будет закреплён при первом подключении{% endif %}</p>
-<details><summary>Публичные ключи агента (для ручной установки)</summary>
-<div class="field"><label>ed25519 (RouterOS 7)</label><pre>{{ pubkeys.ed25519 }}</pre></div>
-<div class="field"><label>RSA (RouterOS 6)</label><pre>{{ pubkeys.rsa }}</pre></div></details>
+<details {{ 'open' if device.status in ('auth_failed','new') }}><summary><b>Ручная установка</b> — если пароль админа вводить не хочется или не подходит</summary>
+<p class="muted">Выполните на роутере (Winbox → New Terminal, или по SSH с машины, где вход уже работает).
+Результат тот же, что у кнопки выше: read-only группа без <code>write</code> и <code>sensitive</code> плюс ключ агента.</p>
+<label>RouterOS 7 — вставить целиком</label>
+<pre id="manual7">{{ manual_ros7 }}</pre>
+<button class="btn sec sm" type="button" onclick="copyManual('manual7')">Скопировать</button>
+<details style="margin-top:12px"><summary>RouterOS 6 (RSA-ключ, ed25519 не поддерживается)</summary>
+<pre id="manual6">{{ manual_ros6 }}</pre>
+<button class="btn sec sm" type="button" onclick="copyManual('manual6')">Скопировать</button></details>
+<p class="muted" style="margin-top:10px">После этого нажмите «Проверить связь» — устройство перейдёт на ключевую аутентификацию.</p>
+</details>
 </div>
 
 <script id="exportdata" type="text/plain">{{ export or '' }}</script>
@@ -115,6 +129,11 @@ async function collect(){
   setTimeout(()=>location.reload(),700);
 }
 async function forget(){ await post('/api/devices/{{ device.id }}/forget-hostkey'); location.reload(); }
+function copyManual(id){
+  const btn=event.target, txt=btn.textContent;
+  navigator.clipboard.writeText(document.getElementById(id).textContent)
+    .then(()=>{ btn.textContent='Скопировано'; setTimeout(()=>btn.textContent=txt,1500); });
+}
 async function onboard(e){
   e.preventDefault();
   const fd=new FormData(e.target);

@@ -169,7 +169,9 @@ async def device_detail(request: Request, device_id: int):
                   export=export, sections=rsc.section_index(export) if export else {},
                   history=store.history(dev["slug"], 15),
                   hostkey=bool(known_host_entry(dev["host"], dev["port"])),
-                  pubkeys=collector.public_keys())
+                  pubkeys=collector.public_keys(),
+                  manual_ros7=onboard.manual_script("agent", collector.public_keys()["ed25519"], "ed25519"),
+                  manual_ros6=onboard.manual_script("agent", collector.public_keys()["rsa"], "rsa"))
 
 
 @app.get("/devices/{device_id}/edit", response_class=HTMLResponse)
