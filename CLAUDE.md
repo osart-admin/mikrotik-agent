@@ -66,7 +66,8 @@ Request/data flow (all in `app/`):
 - **`collector.py`** - the run: bounded concurrency, per-device failures isolated, volatile values
   (uptime, cpu) to SQLite only so they never churn git.
 - **`onboard.py`** - the one write operation: creates group `mikrotik-agent-ro`
-  (`ssh,read,test` - deliberately no `write`, no `sensitive`) and imports the agent's public key.
+  (`ssh,read` - deliberately no `write`, no `sensitive`, and no `test`, which would
+  grant bandwidth-test and flood-ping) and imports the agent's public key.
   Admin credentials come from the request and are never stored. ed25519 for ROS 7, RSA for ROS 6.
 - **`tools.py`** / **`agent.py`** - the LLM tool layer and loop. Tools are size-capped; the system
   prompt carries the fleet map so the model navigates instead of grepping blindly.

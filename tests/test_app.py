@@ -304,3 +304,23 @@ def test_identity_is_used_as_the_display_name(logged_in):
     html = logged_in.get("/").text
     assert "HSH-D" in html
     logged_in.post(f"/devices/{dev['id']}/delete")
+
+
+def test_agent_group_grants_only_what_the_collector_uses():
+    """The read path must stay incapable of writing, reading secrets, or generating traffic."""
+    import re
+    from pathlib import Path
+
+    from app import onboard as ob
+
+    granted = set(ob.GROUP_POLICY.split(","))
+    assert granted == {"ssh", "read"}
+    for forbidden in ("write", "policy", "sensitive", "test", "ftp", "reboot", "sniff"):
+        assert forbidden not in granted
+
+    # Every command the collector sends must be a read: a print or an export.
+    src = Path(ob.__file__).with_name("collector.py").read_text()
+    commands = re.findall(r'r\.run\("([^"]+)"\)', src)
+    assert commands, "no router commands found - did collector.py change shape?"
+    for cmd in commands:
+        assert cmd.startswith("/export") or cmd.endswith("print"), f"{cmd!r} is not a read command"

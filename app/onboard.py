@@ -12,8 +12,14 @@ from . import collector, db
 from .ssh import Credentials, RouterSSH, SSHError, parse_print, parse_print_terse
 
 GROUP = "mikrotik-agent-ro"
-# Only positive policies: unlisted ones are disabled, and crucially 'sensitive' and 'write' stay off.
-GROUP_POLICY = "ssh,read,test"
+# Only positive policies: unlisted ones are disabled. Deliberately minimal - the collector runs
+# exactly four commands (/system resource|identity|routerboard print and /export), all covered by
+# 'read'. In particular:
+#   'write'     - the read path must be incapable of changing anything
+#   'sensitive' - makes the router itself refuse to hand over secrets, before the scrubber
+#   'test'      - grants bandwidth-test and flood-ping, i.e. the ability to saturate a link.
+#                 Add it only when live diagnostics (ping/traceroute) are actually implemented.
+GROUP_POLICY = "ssh,read"
 
 
 def manual_script(agent_user: str, pubkey: str, key_kind: str, allowed_address: str = "") -> str:

@@ -21,7 +21,7 @@
 
 {% if device.auth=='password' or device.status in ('auth_failed','new') %}
 <div class="card"><h2>Онбординг: создать read-only пользователя</h2>
-<p class="muted">Разово подключимся под админом, создадим группу <code>mikrotik-agent-ro</code> (политики <code>ssh,read,test</code> — без <code>write</code> и без <code>sensitive</code>) и зальём публичный ключ агента. Админ-пароль нигде не сохраняется.</p>
+<p class="muted">Разово подключимся под админом, создадим группу <code>mikrotik-agent-ro</code> (политики <code>ssh,read</code> — без <code>write</code>, <code>sensitive</code> и <code>test</code>) и зальём публичный ключ агента. Админ-пароль нигде не сохраняется.</p>
 <form onsubmit="return onboard(event)" autocomplete="off">
 {# A type=password field makes the browser treat this as a login form and autofill the UI
    credentials, which are not the router's. Same masked-text-input trick as the settings page. #}
