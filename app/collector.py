@@ -34,7 +34,7 @@ def public_keys() -> dict[str, str]:
     return {"ed25519": db.get_setting(KEY_ED25519 + "_pub", "") or "", "rsa": db.get_setting(KEY_RSA + "_pub", "") or ""}
 
 
-def credentials_for(dev: sqlite3.Row) -> Credentials:
+def credentials_for(dev: sqlite3.Row | dict) -> Credentials:
     if dev["auth"] == "password":
         return Credentials(dev["username"], password=db.device_password(dev))
     keys = [db.get_secret(KEY_ED25519) or "", db.get_secret(KEY_RSA) or ""]
@@ -47,7 +47,7 @@ def _version(res: dict[str, str]) -> str:
     return (res.get("version") or "").split(" ")[0]
 
 
-async def probe(dev: sqlite3.Row) -> dict[str, str]:
+async def probe(dev: sqlite3.Row | dict) -> dict[str, str]:
     """Connect and read identity/version - the 'Test connection' button."""
     async with RouterSSH(dev["host"], dev["port"], credentials_for(dev)) as r:
         res = parse_print(await r.run("/system resource print"))

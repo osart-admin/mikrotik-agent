@@ -244,6 +244,32 @@ async def device_forget_hostkey(request: Request, device_id: int):
     return {"ok": True}
 
 
+@app.post("/api/devices/{device_id}/use-agent-key")
+async def device_use_agent_key(request: Request, device_id: int, agent_user: str = Form("agent")):
+    """Switch a device to key auth after the key was installed by hand.
+
+    Verifies the login before saving, so a half-finished manual install cannot leave the device
+    pointing at credentials that do not work.
+    """
+    user = auth.require_user(request)
+    dev = db.get_device(device_id)
+    if dev is None:
+        raise HTTPException(404, "device not found")
+    agent_user = agent_user.strip() or "agent"
+    probe = dict(dev)
+    probe.update({"username": agent_user, "auth": "key", "password_enc": None})
+    try:
+        info = await collector.probe(probe)
+    except SSHError as exc:
+        return JSONResponse({"ok": False, "kind": exc.kind, "message": exc.message}, status_code=200)
+    db.update_device(device_id, {"username": agent_user, "auth": "key", "password_enc": None,
+                                 "status": "ok", "status_message": "", "identity": info["identity"],
+                                 "ros_version": info["version"], "board": info["board"],
+                                 "arch": info["arch"], "last_seen": db.now_iso()})
+    db.audit(user["username"], "use_agent_key", f"{dev['slug']} -> {agent_user}")
+    return {"ok": True, **info}
+
+
 @app.post("/api/devices/{device_id}/onboard")
 async def device_onboard(request: Request, device_id: int, admin_user: str = Form(...), admin_password: str = Form(...),
                          agent_user: str = Form("agent"), allowed_address: str = Form("")):

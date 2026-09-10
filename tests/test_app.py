@@ -214,3 +214,25 @@ def test_device_page_offers_the_manual_script(logged_in):
     assert "/user ssh-keys import user=agent" in html
     assert "mikrotik-agent-ro" in html
     logged_in.post(f"/devices/{dev['id']}/delete")
+
+
+def test_use_agent_key_refuses_when_the_key_is_not_installed(logged_in):
+    """The switch must verify the login first, or a failed manual install leaves a broken device."""
+    logged_in.post("/devices/new", data={"name": "Switch Probe", "host": "192.0.2.57",
+                                         "port": "22", "username": "admin", "auth_mode": "password",
+                                         "password": "irrelevant"})
+    dev = db.get_device_by_slug("switch-probe")
+    body = logged_in.post(f"/api/devices/{dev['id']}/use-agent-key", data={"agent_user": "agent"}).json()
+    assert body["ok"] is False
+    after = db.get_device(dev["id"])
+    assert after["username"] == "admin" and after["auth"] == "password"
+    logged_in.post(f"/devices/{dev['id']}/delete")
+
+
+def test_device_page_offers_the_switch_after_manual_install(logged_in):
+    logged_in.post("/devices/new", data={"name": "Switch UI", "host": "192.0.2.58",
+                                         "port": "22", "username": "admin", "auth_mode": "password"})
+    dev = db.get_device_by_slug("switch-ui")
+    html = logged_in.get(f"/devices/{dev['id']}").text
+    assert "use-agent-key" in html and "Ключ установлен вручную" in html
+    logged_in.post(f"/devices/{dev['id']}/delete")

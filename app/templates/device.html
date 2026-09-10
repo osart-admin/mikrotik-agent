@@ -90,7 +90,10 @@
 <details style="margin-top:12px"><summary>RouterOS 6 (RSA-ключ, ed25519 не поддерживается)</summary>
 <pre id="manual6">{{ manual_ros6 }}</pre>
 <button class="btn sec sm" type="button" onclick="copyManual('manual6')">Скопировать</button></details>
-<p class="muted" style="margin-top:10px">После этого нажмите «Проверить связь» — устройство перейдёт на ключевую аутентификацию.</p>
+<p class="muted" style="margin-top:10px">После этого нажмите кнопку ниже — она проверит вход по ключу и переключит карточку устройства с
+<code>{{ device.username }}</code>/пароль на <code>agent</code>/ключ. Без этого «Проверить связь» продолжит ходить под старым пользователем.</p>
+<button class="btn" type="button" onclick="useAgentKey()">Ключ установлен вручную — перейти на него</button>
+<div id="switchmsg"></div>
 </details>
 </div>
 
@@ -129,6 +132,15 @@ async function collect(){
   setTimeout(()=>location.reload(),700);
 }
 async function forget(){ await post('/api/devices/{{ device.id }}/forget-hostkey'); location.reload(); }
+async function useAgentKey(){
+  const el=document.getElementById('switchmsg');
+  el.innerHTML='<div class="alert warn">Проверяю вход по ключу…</div>';
+  const r=await post('/api/devices/{{ device.id }}/use-agent-key');
+  el.innerHTML = r.ok
+    ? '<div class="alert ok">Вход по ключу работает — '+r.identity+', RouterOS '+r.version+'. Переключено.</div>'
+    : '<div class="alert err">'+r.message+'</div>';
+  if(r.ok) setTimeout(()=>location.reload(),1600);
+}
 function copyManual(id){
   const btn=event.target, txt=btn.textContent;
   navigator.clipboard.writeText(document.getElementById(id).textContent)
