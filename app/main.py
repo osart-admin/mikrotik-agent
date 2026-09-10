@@ -136,8 +136,11 @@ async def index(request: Request):
         raw = store.read_facts(d["slug"])
         d["facts"] = json.loads(raw) if raw else None
     runs = [dict(r) for r in db.list_runs(5)]
+    dupes: dict[str, int] = {}
+    for d in devices:
+        dupes[d["host"]] = dupes.get(d["host"], 0) + 1
     return render(request, "devices.html", devices=devices, runs=runs, next_run=scheduler.next_run(),
-                  sites=sorted({d["site"] for d in devices if d["site"]}))
+                  dupes=dupes, sites=sorted({d["site"] for d in devices if d["site"]}))
 
 
 @app.get("/devices/new", response_class=HTMLResponse)

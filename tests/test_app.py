@@ -236,3 +236,71 @@ def test_device_page_offers_the_switch_after_manual_install(logged_in):
     html = logged_in.get(f"/devices/{dev['id']}").text
     assert "use-agent-key" in html and "Ключ установлен вручную" in html
     logged_in.post(f"/devices/{dev['id']}/delete")
+
+
+def test_device_list_shows_auth_mode_and_delete(logged_in):
+    logged_in.post("/devices/new", data={"name": "KeyDev", "host": "192.0.2.60", "port": "22",
+                                         "username": "agent", "auth_mode": "key"})
+    logged_in.post("/devices/new", data={"name": "PwDev", "host": "192.0.2.61", "port": "22",
+                                         "username": "osart", "auth_mode": "password", "password": "x"})
+    html = logged_in.get("/").text
+    assert "🔑 ключ" in html and "пароль" in html
+    assert "data-del=" in html
+    for slug in ("keydev", "pwdev"):
+        logged_in.post(f"/devices/{db.get_device_by_slug(slug)['id']}/delete")
+
+
+def test_duplicate_hosts_are_flagged(logged_in):
+    for n in ("Dup A", "Dup B"):
+        logged_in.post("/devices/new", data={"name": n, "host": "192.0.2.62", "port": "22",
+                                             "username": "agent", "auth_mode": "key"})
+    assert "дубликат адреса" in logged_in.get("/").text
+    for slug in ("dup-a", "dup-b"):
+        logged_in.post(f"/devices/{db.get_device_by_slug(slug)['id']}/delete")
+    assert "дубликат адреса" not in logged_in.get("/").text
+
+
+def test_delete_removes_stored_config_too(logged_in):
+    from app import store
+    logged_in.post("/devices/new", data={"name": "Doomed", "host": "192.0.2.63", "port": "22",
+                                         "username": "agent", "auth_mode": "key"})
+    dev = db.get_device_by_slug("doomed")
+    store.write_device("doomed", "/ip address add address=10.0.0.1/24\n", "{}")
+    assert store.read_export("doomed") is not None
+    logged_in.post(f"/devices/{dev['id']}/delete")
+    assert db.get_device(dev["id"]) is None
+    assert store.read_export("doomed") is None
+
+
+def test_delete_button_markup_survives_a_quote_in_the_name(logged_in):
+    """A name in an onclick="" attribute broke the markup, because tojson leaves \" unescaped."""
+    from html.parser import HTMLParser
+
+    logged_in.post("/devices/new", data={"name": 'He said "hi" <b>', "host": "192.0.2.64",
+                                         "port": "22", "username": "agent", "auth_mode": "key"})
+    dev = db.get_device_by_slug("he-said-hi-b")
+    html = logged_in.get("/").text
+
+    seen = []
+
+    class P(HTMLParser):
+        def handle_starttag(self, tag, attrs):
+            d = dict(attrs)
+            if "data-del" in d:
+                seen.append(d)
+
+    P().feed(html)
+    assert seen, "delete button not found or its markup did not parse"
+    assert seen[-1]["data-name"] == 'He said "hi" <b>'
+    assert seen[-1]["data-del"] == str(dev["id"])
+    logged_in.post(f"/devices/{dev['id']}/delete")
+
+
+def test_identity_is_used_as_the_display_name(logged_in):
+    logged_in.post("/devices/new", data={"name": "10.0.3.254", "host": "10.0.3.254", "port": "22",
+                                         "username": "agent", "auth_mode": "key"})
+    dev = db.get_device_by_slug("10-0-3-254")
+    db.update_device(dev["id"], {"identity": "HSH-D"})
+    html = logged_in.get("/").text
+    assert "HSH-D" in html
+    logged_in.post(f"/devices/{dev['id']}/delete")

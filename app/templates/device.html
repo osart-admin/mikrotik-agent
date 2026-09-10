@@ -3,7 +3,10 @@
   <div><h2 style="margin:0;font-size:17px">{{ device.name }}
     {% if device.status=='ok' %}<span class="tag ok">ok</span>{% elif device.status=='new' %}<span class="tag">новое</span>
     {% else %}<span class="tag err">{{ device.status }}</span>{% endif %}</h2>
-    <div class="muted"><code>{{ device.username }}@{{ device.host }}{% if device.port!=22 %}:{{ device.port }}{% endif %}</code>
+    <div class="muted">
+    {% if device.auth == 'key' %}<span class="tag ok" title="Вход по SSH-ключу агента, пароль не хранится">🔑 ключ</span>
+    {% else %}<span class="tag warn" title="Хранится пароль устройства">пароль</span>{% endif %}
+    <code>{{ device.username }}@{{ device.host }}{% if device.port!=22 %}:{{ device.port }}{% endif %}</code>
     {% if device.identity %} · identity <b>{{ device.identity }}</b>{% endif %}
     {% if device.model %} · {{ device.model }}{% endif %}{% if device.ros_version %} · ROS {{ device.ros_version }}{% endif %}
     {% if device.serial %} · s/n {{ device.serial }}{% endif %}</div></div>
@@ -11,6 +14,7 @@
     <button class="btn sec" onclick="test()">Проверить связь</button>
     <button class="btn sec" onclick="collect()">Собрать</button>
     <a class="btn sec" href="/devices/{{ device.id }}/edit">Изменить</a>
+    <button class="btn danger" onclick="del()">Удалить</button>
   </div>
 </div>
 <div id="msg">{% if device.status_message and device.status!='ok' %}<div class="alert err">{{ device.status_message }}</div>{% endif %}</div>
@@ -130,6 +134,12 @@ async function collect(){
   const r=await post('/api/collect?device_id={{ device.id }}');
   document.getElementById('msg').innerHTML='<div class="alert ok">Готово</div>';
   setTimeout(()=>location.reload(),700);
+}
+function del(){
+  if(!confirm('Удалить «{{ device.identity or device.name }}»?\n\nКарточка и вся сохранённая история конфигов будут стёрты. Сам роутер не затрагивается.')) return;
+  const f=document.createElement('form');
+  f.method='post'; f.action='/devices/{{ device.id }}/delete';
+  document.body.appendChild(f); f.submit();
 }
 async function forget(){ await post('/api/devices/{{ device.id }}/forget-hostkey'); location.reload(); }
 async function useAgentKey(){

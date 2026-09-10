@@ -15,13 +15,18 @@
 {% else %}
 <div class="card" style="padding:0;overflow:auto">
 <table>
-<tr><th>Устройство</th><th>Адрес</th><th>Модель / ROS</th><th>Сеть</th><th>Туннели</th><th>Статус</th><th>Собран</th><th></th></tr>
+<tr><th>Устройство</th><th>Адрес</th><th>Доступ</th><th>Модель / ROS</th><th>Сеть</th><th>Туннели</th><th>Статус</th><th>Собран</th><th></th></tr>
 {% for d in devices %}
 <tr>
-  <td><a href="/devices/{{ d.id }}"><b>{{ d.name }}</b></a>
+  <td><a href="/devices/{{ d.id }}"><b>{{ d.identity or d.name }}</b></a>
+      {% if d.identity and d.name != d.identity %}<div class="muted">карточка: {{ d.name }}</div>{% endif %}
       {% if d.site %}<div class="muted">{{ d.site }}{% if d.role %} · {{ d.role }}{% endif %}</div>{% endif %}
-      {% if not d.enabled %}<span class="tag">выключено</span>{% endif %}</td>
-  <td><code>{{ d.host }}{% if d.port != 22 %}:{{ d.port }}{% endif %}</code><div class="muted">{{ d.username }} · {{ 'ключ' if d.auth=='key' else 'пароль' }}</div></td>
+      {% if not d.enabled %}<span class="tag">выключено</span>{% endif %}
+      {% if dupes[d.host] > 1 %}<div><span class="tag warn" title="Этот адрес заведён несколько раз">дубликат адреса</span></div>{% endif %}</td>
+  <td><code>{{ d.host }}{% if d.port != 22 %}:{{ d.port }}{% endif %}</code></td>
+  <td>{% if d.auth == 'key' %}<span class="tag ok" title="Вход по SSH-ключу агента, пароль не хранится">🔑 ключ</span>
+      {% else %}<span class="tag warn" title="Хранится пароль. Выполните онбординг, чтобы перейти на ключ.">пароль</span>{% endif %}
+      <div class="muted">{{ d.username }}</div></td>
   <td>{{ d.model or d.board or '—' }}<div class="muted">{{ d.ros_version or '' }}</div></td>
   <td class="muted">{% if d.facts %}{{ d.facts.subnets[:3]|join(', ') }}{% if d.facts.subnets|length > 3 %} +{{ d.facts.subnets|length - 3 }}{% endif %}
       {% if d.facts.interfaces.vlan %}<div>{{ d.facts.interfaces.vlan|length }} VLAN</div>{% endif %}{% endif %}</td>
@@ -31,11 +36,14 @@
       {% else %}<span class="tag err" title="{{ d.status_message }}">{{ d.status }}</span>{% endif %}</td>
   <td class="muted">{{ d.last_collected[5:16].replace('T',' ') if d.last_collected else '—' }}
       {% if d.export_lines %}<div>{{ d.export_lines }} строк</div>{% endif %}</td>
-  <td><button class="btn sec sm" onclick="collect({{ d.id }})">↻</button></td>
+  <td style="white-space:nowrap">
+      <button class="btn sec sm" onclick="collect({{ d.id }})" title="Собрать конфиг">↻</button>
+      <button class="btn danger sm" data-del="{{ d.id }}" data-name="{{ d.identity or d.name }}" title="Удалить устройство">✕</button></td>
 </tr>
 {% endfor %}
 </table>
 </div>
+<form method="post" id="delform" style="display:none"></form>
 {% endif %}
 
 {% if runs %}
@@ -64,4 +72,14 @@ async function collect(id){
   }catch(e){document.getElementById('msg').innerHTML='<div class="alert err">'+e+'</div>';}
   if(b){b.disabled=false;b.textContent='Собрать всё';}
 }
+// Delegated, and the id/name ride in data-* attributes: Jinja's tojson does not escape double
+// quotes, so a name inside an onclick="" attribute would break the markup.
+document.addEventListener('click', function(e){
+  const b = e.target.closest('[data-del]');
+  if(!b) return;
+  if(!confirm('Удалить «'+b.dataset.name+'»?\n\nКарточка и вся сохранённая история его конфигов будут стёрты. Сам роутер не затрагивается.')) return;
+  const f=document.getElementById('delform');
+  f.action='/devices/'+b.dataset.del+'/delete';
+  f.submit();
+});
 </script>{% endblock %}
