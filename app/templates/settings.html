@@ -14,7 +14,7 @@
 <input type="password" name="_nofill_p" style="display:none" tabindex="-1" aria-hidden="true"/>
 <div class="row">
 <div class="field"><label>Провайдер</label><select name="provider" id="prov" onchange="syncProv()">
-{% for p in keys %}<option value="{{ p }}" {{ 'selected' if p==provider }}>{{ p }}</option>{% endfor %}
+{% for p in keys %}<option value="{{ p }}" {{ 'selected' if p==provider }}>{{ provider_labels.get(p, p) }}</option>{% endfor %}
 </select></div>
 <div class="field"><label>Модель</label>
 <select name="model" id="model" onchange="toggleCustom()">
@@ -26,6 +26,7 @@
 <div class="field" id="customwrap" style="display:none"><label>Идентификатор модели</label>
 <input name="model_custom" id="model_custom" value="{{ models[provider] if models[provider] not in catalog[provider]|map(attribute='model_id')|list else '' }}" placeholder="gpt-6-astra" autocomplete="off" spellcheck="false"/></div>
 <div class="field"><label>Глубина рассуждений (reasoning effort)</label>
+{% if not reasoning_ok %}<div class="alert warn" style="margin-bottom:6px">Chat Completions не принимает reasoning вместе с инструментами — при работе агента значение игнорируется. Для рассуждений выберите Responses API.</div>{% endif %}
 <select name="reasoning_effort">
 {% for e in reasoning_efforts %}<option value="{{ e }}" {{ 'selected' if e==efforts[provider] }}>{{ e or 'не передавать (по умолчанию модели)' }}</option>{% endfor %}
 </select></div>

@@ -415,7 +415,9 @@ async def settings_page(request: Request, imported: int = 0, error: str = "", pr
                   keys={p: db.has_secret(f"{p}_api_key") for p in llm.PROVIDERS},
                   base_urls={p: db.get_setting(f"{p}_base_url", "") or "" for p in llm.PROVIDERS},
                   efforts={p: db.get_setting(f"{p}_reasoning_effort", "") or "" for p in llm.PROVIDERS},
-                  catalog={p: [dict(m) for m in db.list_models(p)] for p in llm.PROVIDERS},
+                  catalog={p: [dict(m) for m in db.list_models(llm.family(p))] for p in llm.PROVIDERS},
+                  provider_labels=llm.PROVIDER_LABELS,
+                  reasoning_ok=llm.PROVIDERS[provider].supports_reasoning_with_tools,
                   all_models=[dict(m) for m in db.list_models(enabled_only=False)],
                   reasoning_efforts=pricing.REASONING_EFFORTS,
                   budget=agent.budget_status(), fmt_usd=pricing.fmt_usd,
@@ -578,7 +580,7 @@ async def settings_models(request: Request):
         if not mid:
             continue
         fields: dict[str, Any] = {"model_id": mid,
-                                  "provider": str(form.getlist("provider")[i]).strip() or "openai",
+                                  "provider": llm.family(str(form.getlist("provider")[i]).strip() or "openai"),
                                   "label": str(form.getlist("label")[i]).strip()}
         for key in numeric:
             try:

@@ -70,7 +70,16 @@ Request/data flow (all in `app/`):
   Admin credentials come from the request and are never stored. ed25519 for ROS 7, RSA for ROS 6.
 - **`tools.py`** / **`agent.py`** - the LLM tool layer and loop. Tools are size-capped; the system
   prompt carries the fleet map so the model navigates instead of grepping blindly.
-- **`llm/`** - provider adapters (`openai`, `anthropic`) behind one interface. API keys are entered
+- **`llm/`** - provider adapters behind one interface. **`openai` is the Responses API
+  (`/v1/responses`), and that is not a preference**: `/v1/chat/completions` refuses function tools
+  together with reasoning, and these models reason by default - so on that endpoint
+  `reasoning_effort="none"` must be sent explicitly whenever tools are present (the `openai-chat`
+  adapter does this; it exists for OpenAI-compatible proxies). Tool schemas are flat on Responses
+  (`{"type":"function","name":...}`) and nested on Chat Completions. Responses runs with
+  `store: false` so router configs are not retained provider-side, which means reasoning state
+  must be echoed back by us: `include: ["reasoning.encrypted_content"]` and the opaque output
+  items ride through chat history as `Reply.raw_items` -> message `extra["raw"]`. Both adapters
+  expose `build_payload()` so the wire format is testable without a network. API keys are entered
   in the UI and stored Fernet-encrypted; there is no key env var by design. Each adapter
   normalises usage into `pricing.Usage`: **OpenAI's `prompt_tokens` already includes cached
   tokens** (so uncached = prompt - cached - written) while Anthropic reports cache reads/writes

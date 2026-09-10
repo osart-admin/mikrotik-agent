@@ -10,6 +10,7 @@ from .base import LLMError, Provider, Reply, ToolCall
 
 class AnthropicProvider(Provider):
     name = "anthropic"
+    family = "anthropic"
     default_model = "claude-sonnet-5"
 
 

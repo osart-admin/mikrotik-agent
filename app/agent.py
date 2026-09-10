@@ -94,6 +94,8 @@ def history_for_llm(chat_id: int) -> list[dict[str, Any]]:
             msg: dict[str, Any] = {"role": "assistant", "content": m["content"]}
             if m["extra"].get("tool_calls"):
                 msg["tool_calls"] = m["extra"]["tool_calls"]
+            if m["extra"].get("raw"):
+                msg["raw"] = m["extra"]["raw"]
             out.append(msg)
         elif m["role"] == "tool":
             out.append({"role": "tool", "tool_call_id": m["extra"].get("tool_call_id", ""), "content": m["content"]})
@@ -161,8 +163,14 @@ async def run_turn(chat_id: int, user_text: str) -> AsyncIterator[dict[str, Any]
             return
 
         call_dicts = [{"id": tc.id, "name": tc.name, "arguments": tc.arguments} for tc in reply.tool_calls]
-        db.add_message(chat_id, "assistant", reply.content, {"tool_calls": call_dicts})
-        messages.append({"role": "assistant", "content": reply.content, "tool_calls": call_dicts})
+        extra: dict[str, Any] = {"tool_calls": call_dicts}
+        if reply.raw_items:
+            extra["raw"] = reply.raw_items
+        db.add_message(chat_id, "assistant", reply.content, extra)
+        step_msg: dict[str, Any] = {"role": "assistant", "content": reply.content, "tool_calls": call_dicts}
+        if reply.raw_items:
+            step_msg["raw"] = reply.raw_items
+        messages.append(step_msg)
         if reply.content:
             yield {"type": "thinking", "content": reply.content}
 

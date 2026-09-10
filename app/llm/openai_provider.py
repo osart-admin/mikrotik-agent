@@ -10,8 +10,17 @@ from .base import LLMError, Provider, Reply, ToolCall
 
 
 class OpenAIProvider(Provider):
-    name = "openai"
+    """Chat Completions. Kept for OpenAI-compatible third-party endpoints.
+
+    This endpoint refuses function tools together with reasoning, and current models reason by
+    default, so reasoning_effort="none" is sent explicitly whenever tools are present. Reasoning
+    and tools together require the Responses API - see supports_reasoning_with_tools.
+    """
+
+    name = "openai-chat"
+    family = "openai"
     default_model = "gpt-5.6-terra"
+    supports_reasoning_with_tools = False
 
     def _url(self, path: str) -> str:
         return (self.base_url.rstrip("/") if self.base_url else "https://api.openai.com/v1") + path
@@ -59,15 +68,22 @@ class OpenAIProvider(Provider):
             reasoning=int(out_details.get("reasoning_tokens") or 0),
         )
 
-    async def chat(self, system: str, messages: list[dict[str, Any]], tools: list[dict[str, Any]]) -> Reply:
+    def build_payload(self, system: str, messages: list[dict[str, Any]], tools: list[dict[str, Any]]) -> dict[str, Any]:
         payload: dict[str, Any] = {
             "model": self.model,
             "messages": [{"role": "system", "content": system}, *self._to_wire(messages)],
         }
         if tools:
             payload["tools"] = [{"type": "function", "function": t} for t in tools]
-        if self.reasoning_effort:
+            # These models reason by default, and this endpoint refuses tools plus reasoning even
+            # when the parameter is not sent - "none" must be explicit to use function tools here.
+            payload["reasoning_effort"] = "none"
+        elif self.reasoning_effort:
             payload["reasoning_effort"] = self.reasoning_effort
+        return payload
+
+    async def chat(self, system: str, messages: list[dict[str, Any]], tools: list[dict[str, Any]]) -> Reply:
+        payload = self.build_payload(system, messages, tools)
         async with httpx.AsyncClient(timeout=300) as client:
             resp = await client.post(self._url("/chat/completions"),
                                      headers={"Authorization": f"Bearer {self.api_key}"}, json=payload)
