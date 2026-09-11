@@ -1,21 +1,23 @@
 {% extends "base.html" %}{% set page='runs' %}{% block content %}
-<div class="flex between" style="margin-bottom:14px">
-<h2 style="margin:0;font-size:17px">Сборы</h2>
-<span class="muted">{% if next_run %}следующий: {{ next_run[:16].replace('T',' ') }}{% else %}автосбор выключен{% endif %}</span>
+<div class="flex between" style="margin-bottom:6px">
+<h2 style="margin:0;font-size:17px">История сбора</h2>
+<span class="muted">{% if next_run %}следующий: {{ next_run[:16].replace('T',' ') }}{% else %}автосбор выключен — <a href="/settings">задать интервал</a>{% endif %}</span>
 </div>
+<p class="muted" style="margin:0 0 14px">Сбор — один проход по всем включённым устройствам: зайти по SSH, снять <code>/export</code>,
+сравнить с сохранённым и закоммитить, если конфигурация изменилась.</p>
 {% for r in runs %}
 <div class="card">
 <div class="flex between"><b>Сбор #{{ r.id }}</b>
-<span class="muted">{{ r.started_at[:16].replace('T',' ') }} · {{ r.trigger }}
-· {{ r.ok_count }} ok{% if r.fail_count %} · <span class="tag err">{{ r.fail_count }} ошибок</span>{% endif %}
-{% if r.changed_count %} · <span class="tag warn">{{ r.changed_count }} изменилось</span>{% endif %}
-{% if r.commit_sha %} · <code>{{ r.commit_sha[:8] }}</code>{% endif %}</span></div>
+<span class="muted">{{ r.started_at[:16].replace('T',' ') }} · {{ 'вручную' if r.trigger=='manual' else 'по расписанию' }}
+· собрано {{ r.ok_count }}{% if r.fail_count %} · <span class="tag err">не удалось {{ r.fail_count }}</span>{% endif %}
+{% if r.changed_count %} · <span class="tag warn">конфиг изменился у {{ r.changed_count }}</span>{% else %} · изменений нет{% endif %}
+{% if r.commit_sha %} · коммит <code>{{ r.commit_sha[:8] }}</code>{% endif %}</span></div>
 {% if detail.get(r.id) %}
 <table style="margin-top:10px">
 {% for d in detail[r.id] %}
 <tr><td><a href="/devices/{{ d.device_id }}">{{ d.name }}</a></td>
 <td>{% if d.status=='ok' %}<span class="tag ok">ok</span>{% else %}<span class="tag err">{{ d.status }}</span>{% endif %}
-{% if d.changed %} <span class="tag warn">изменился</span>{% endif %}</td>
+{% if d.changed %} <span class="tag warn">конфиг изменился</span>{% endif %}</td>
 <td class="muted">{{ d.duration_ms }} мс</td>
 <td class="muted">{{ d.message[:120] }}</td></tr>
 {% endfor %}
@@ -23,6 +25,6 @@
 {% endif %}
 </div>
 {% else %}
-<div class="card"><p class="muted">Сборов ещё не было.</p></div>
+<div class="card"><p class="muted">Сборов ещё не было — нажмите «Собрать всё» на странице <a href="/">Устройства</a>.</p></div>
 {% endfor %}
 {% endblock %}

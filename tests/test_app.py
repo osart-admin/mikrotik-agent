@@ -368,3 +368,19 @@ def test_admin_credentials_never_reach_storage():
 
     assert "password_enc" not in onboard_src.split("async def onboard")[1].split("return log")[0] \
         or 'db.update_device(dev["id"], {"username": agent_user, "auth": "key", "password_enc": None' in onboard_src
+
+
+def test_runs_page_is_labelled_as_a_history(logged_in):
+    html = logged_in.get("/runs").text
+    assert "История сбора" in html
+    assert ">Сборы<" not in html          # the old ambiguous nav label
+    assert "один проход по всем включённым устройствам" in html
+
+
+def test_trigger_values_are_shown_in_russian(logged_in):
+    db.start_run("manual")
+    db.start_run("schedule")
+    for path in ("/runs", "/"):
+        html = logged_in.get(path).text
+        assert "вручную" in html and "по расписанию" in html
+        assert ">manual<" not in html and ">schedule<" not in html
