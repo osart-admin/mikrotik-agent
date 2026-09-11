@@ -37,6 +37,7 @@ class Query:
     command: str      # literal, never formatted with caller input
     hint: str = ""
     tail: bool = False  # keep the LAST n lines rather than the first (logs)
+    needs: str = ""     # extra RouterOS policy beyond 'read', if the menu demands one
 
 
 QUERIES: dict[str, Query] = {q.key: q for q in [
@@ -47,8 +48,10 @@ QUERIES: dict[str, Query] = {q.key: q for q in [
           "Issued addresses, bound/waiting state, hostnames."),
     Query("dhcp_client", "DHCP-клиент (WAN)", "/ip dhcp-client print terse",
           "Address obtained on WAN interfaces and its status."),
+    # Verified on RouterOS 7.22: /log print is refused with policy=ssh,read and works once
+    # 'test' is granted, unlike every other entry here.
     Query("log", "Системный лог", "/log print",
-          "Recent events. Use 'match' to filter, e.g. dhcp, wireless, error.", tail=True),
+          "Recent events. Use 'match' to filter, e.g. dhcp, wireless, error.", tail=True, needs="test"),
     Query("interfaces", "Статистика интерфейсов", "/interface print stats terse",
           "Per-interface rx/tx bytes and packets, running state."),
     Query("interface_traffic", "Текущий трафик", "/interface monitor-traffic [find] once",
@@ -83,7 +86,11 @@ QUERIES: dict[str, Query] = {q.key: q for q in [
 
 
 def describe() -> str:
-    return "\n".join(f"{q.key} — {q.label}" + (f". {q.hint}" if q.hint else "") for q in QUERIES.values())
+    return "\n".join(
+        f"{q.key} — {q.label}" + (f". {q.hint}" if q.hint else "")
+        + (f" (requires the '{q.needs}' policy, which the read-only group may not have)" if q.needs else "")
+        for q in QUERIES.values()
+    )
 
 
 class LiveError(Exception):
@@ -110,10 +117,20 @@ async def fetch(device: Any, key: str) -> str:
     except SSHError as exc:
         raise LiveError(f"{device['slug']} unreachable ({exc.kind}): {exc.message}") from exc
 
-    if "not enough permissions" in out.lower():
+    low = out.lower()
+    if "not enough permissions" in low:
+        extra = f" This menu requires the '{query.needs}' policy." if query.needs else ""
         raise LiveError(
             f"router refused '{query.command}' for user {device['username']}: the agent's group "
-            f"grants only ssh,read. This command needs more rights and is out of scope."
+            f"grants only ssh,read.{extra} Ask the operator to decide whether to widen the group."
+        )
+    # An unsupported menu (wrong RouterOS version or missing package) otherwise returns its parse
+    # error as if it were data, which the model would try to interpret.
+    if any(m in low for m in ("bad command name", "no such command", "expected end of command",
+                              "syntax error", "no such item")):
+        raise LiveError(
+            f"'{query.key}' is not available on {device['slug']} "
+            f"(RouterOS {device['ros_version'] or '?'}): {out.strip()[:120]}"
         )
     _cache[cache_key] = (now, out)
     return out

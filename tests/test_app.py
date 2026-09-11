@@ -324,3 +324,47 @@ def test_agent_group_grants_only_what_the_collector_uses():
     assert commands, "no router commands found - did collector.py change shape?"
     for cmd in commands:
         assert cmd.startswith("/export") or cmd.endswith("print"), f"{cmd!r} is not a read command"
+
+
+def test_no_tool_can_reach_the_privileged_onboarding_path():
+    """Onboarding opens an admin session with write rights. It must not be a model capability.
+
+    The model's entire surface is tools.REGISTRY; it cannot call HTTP routes. This pins that the
+    registry stays read-only, so adding a write tool has to be a deliberate, visible change.
+    """
+    from app import live, tools
+
+    assert set(tools.REGISTRY) == {
+        "list_devices", "fleet_summary", "list_sections", "get_sections", "search_config",
+        "get_device_facts", "get_full_export", "config_history", "config_diff", "get_live_state",
+    }
+    # Exactly one tool talks to a router, and only through the constant whitelist.
+    import inspect
+    for name, fn in tools.REGISTRY.items():
+        src = inspect.getsource(fn)
+        if name == "get_live_state":
+            assert "live.fetch" in src
+        else:
+            assert "RouterSSH" not in src and "live.fetch" not in src, f"{name} touches a router"
+    assert all(q.command.startswith("/") and "{" not in q.command for q in live.QUERIES.values())
+
+
+def test_admin_credentials_never_reach_storage():
+    """The onboarding password lives in the request only - not the DB, audit rows or settings."""
+    import re
+    from pathlib import Path
+
+    app_dir = Path(__file__).resolve().parents[1] / "app"
+    onboard_src = (app_dir / "onboard.py").read_text()
+    main_src = (app_dir / "main.py").read_text()
+
+    # It may only be passed to Credentials(...) - never to db.*, a logger, or an audit row.
+    for line in onboard_src.splitlines() + main_src.splitlines():
+        if "admin_password" not in line or line.strip().startswith("#"):
+            continue
+        assert not re.search(r"db\.\w+\(.*admin_password", line), line
+        assert not re.search(r"log\.\w+\(.*admin_password", line), line
+        assert not re.search(r"audit\(.*admin_password", line), line
+
+    assert "password_enc" not in onboard_src.split("async def onboard")[1].split("return log")[0] \
+        or 'db.update_device(dev["id"], {"username": agent_user, "auth": "key", "password_enc": None' in onboard_src

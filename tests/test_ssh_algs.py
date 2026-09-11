@@ -63,3 +63,20 @@ def test_connect_kwargs_are_accepted_by_asyncssh_connect():
 
     accepted = set(inspect.signature(asyncssh.SSHClientConnectionOptions.prepare).parameters)
     assert set(ssh._connect_kwargs()) <= accepted
+
+
+def test_commands_are_redacted_before_reaching_error_messages():
+    """A timeout error embeds the command, and onboarding sends /user add ... password="..."."""
+    cmd = '/user add name=agent group=mikrotik-agent-ro password="SOt6opi48D3KaTdROktclRlzaHaNW2TT"'
+    out = ssh.redact(cmd)
+    assert "SOt6opi48D3KaTdROktclRlzaHaNW2TT" not in out
+    assert "<hidden>" in out and "/user add name=agent" in out
+
+
+def test_redaction_covers_the_other_secret_bearing_commands():
+    for cmd, secret in [
+        ('/interface wireguard add name=wg0 private-key="abc123="', "abc123="),
+        ('/ppp secret add name=u password=hunter2', "hunter2"),
+        ('/ip ipsec identity add secret=psk123', "psk123"),
+    ]:
+        assert secret not in ssh.redact(cmd)

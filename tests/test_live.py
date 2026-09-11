@@ -98,3 +98,45 @@ def test_log_lines_are_not_mistaken_for_headers():
     raw = "2026-09-10 23:36:26 wireless,info DE:14:40:72:BA:74@wifi1(HSH) disconnected\n"
     body, shown, _ = live.filter_lines(raw, None, 10, tail=True)
     assert shown == 1 and "wireless,info" in body
+
+
+def test_only_the_log_needs_a_policy_beyond_read():
+    """Verified on RouterOS 7.22: /log print is refused with ssh,read; everything else works."""
+    needing = {q.key: q.needs for q in live.QUERIES.values() if q.needs}
+    assert needing == {"log": "test"}
+
+
+def test_describe_warns_about_the_extra_policy():
+    text = live.describe()
+    assert "requires the 'test' policy" in text
+    assert text.count("requires the") == 1
+
+
+def test_unsupported_menu_is_an_error_not_data():
+    """RouterOS answers an unknown menu with a parse error the model would otherwise read as data."""
+    import asyncio
+    from types import SimpleNamespace
+
+    device = {"id": -1, "slug": "x", "host": "h", "port": 22, "enabled": 1,
+              "username": "agent", "ros_version": "7.22.1", "auth": "key"}
+
+    async def fake_run(self, command, timeout=30):
+        return "bad command name wireless (line 1 column 12)"
+
+    async def go():
+        import app.live as mod
+        real = mod.RouterSSH
+        class Fake:
+            def __init__(self, *a, **k): pass
+            async def __aenter__(self): return self
+            async def __aexit__(self, *a): return False
+            run = fake_run
+        mod.RouterSSH = Fake
+        try:
+            await mod.fetch(device, "wifi_clients_legacy")
+        finally:
+            mod.RouterSSH = real
+            mod.clear_cache()
+
+    with pytest.raises(live.LiveError, match="not available"):
+        asyncio.run(go())

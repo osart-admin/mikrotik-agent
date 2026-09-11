@@ -197,7 +197,7 @@ class RouterSSH:
         try:
             result = await asyncio.wait_for(self._conn.run(command, check=False, term_type=None), timeout)
         except asyncio.TimeoutError as exc:
-            raise SSHError("timeout", f"command timed out after {timeout}s: {command[:80]}") from exc
+            raise SSHError("timeout", f"command timed out after {timeout}s: {redact(command)[:120]}") from exc
         except asyncssh.Error as exc:
             raise SSHError("error", f"command failed: {exc}") from exc
         out = (result.stdout or "") + (result.stderr or "")
@@ -217,6 +217,17 @@ class RouterSSH:
 
 
 _ANSI = re.compile(r"\x1b\[[0-9;?]*[A-Za-z]")
+
+
+def redact(command: str) -> str:
+    """Strip secrets from a command before it can reach an error message, log or the audit table.
+
+    Onboarding sends ``/user add ... password="..."``; embedding the raw command in a timeout
+    error put that credential into stored audit rows.
+    """
+    from .scrub import scrub
+
+    return scrub(command)[0]
 
 
 def normalize(text: str) -> str:
