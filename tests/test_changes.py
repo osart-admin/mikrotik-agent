@@ -140,7 +140,7 @@ def test_propose_change_queues_a_valid_plan(tmp_path):
         "rationale": "Клиенты не резолвят имена, нужен публичный резолвер.",
         "commands": "/ip dns set servers=1.1.1.1,9.9.9.9",
     }))
-    assert "поставлен в очередь" in out and "Ничего ещё не применено" in out
+    assert "поставлен в очередь" in out and "Ничего не применено" in out
     plans = [p for p in db.list_plans() if p["device_slug"] == "planbox"]
     assert len(plans) == 1
     plan = plans[0]
@@ -288,3 +288,39 @@ def test_group_policy_is_verified_after_being_set():
     src = (Path(__file__).resolve().parents[1] / "app" / "onboard.py").read_text()
     assert src.count("await _assert_group_policy(") == 2
     assert "actual != want" in src
+
+
+# --------------------------------------------------------------- applying is off
+
+def test_applying_is_disabled_by_default():
+    """The rollback safety net cannot be built with a minimal write account, so applying is off."""
+    from app import db
+
+    assert (db.get_setting("apply_enabled", "0") or "0") != "1"
+
+
+def test_apply_route_refuses_while_disabled(logged_in_changes):
+    client, plan_id = logged_in_changes
+    r = client.post(f"/changes/{plan_id}/apply", data={"rollback_minutes": "10"}, follow_redirects=False)
+    assert r.status_code == 303
+    assert "%D0%BE%D1%82%D0%BA%D0%B0%D1%82" in r.headers["location"] or "error=" in r.headers["location"]
+    from app import db
+    assert db.get_plan(plan_id)["status"] == "pending", "план не должен меняться"
+
+
+def test_plan_can_be_marked_done_by_hand(logged_in_changes):
+    client, plan_id = logged_in_changes
+    from app import db
+
+    client.post(f"/changes/{plan_id}/done", data={"note": "выполнил в Winbox"})
+    plan = db.get_plan(plan_id)
+    assert plan["status"] == "applied"
+    assert "вручную" in plan["output"] and "Winbox" in plan["output"]
+
+
+def test_plan_page_shows_manual_instructions(logged_in_changes):
+    client, plan_id = logged_in_changes
+    html = client.get(f"/changes/{plan_id}").text
+    assert "Выполнить вручную" in html
+    assert "Ctrl+X" in html and "safe mode" in html
+    assert "Применить</button>" not in html

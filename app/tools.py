@@ -233,11 +233,12 @@ def propose_change(device: str = "", title: str = "", rationale: str = "", comma
     if verdict.risky:
         note = ("\nВНИМАНИЕ, помечено как рискованное:\n"
                 + "\n".join(f"  строка {f.line}: {f.reason}" for f in verdict.risky))
-    return (f"План #{plan_id} поставлен в очередь на подтверждение для {dev['slug']} "
+    return (f"План #{plan_id} поставлен в очередь для {dev['slug']} "
             f"({len(verdict.commands)} команд, риск: {verdict.risk}).{note}\n\n"
-            f"Ничего ещё не применено. Человек должен открыть раздел «Изменения», проверить план "
-            f"и подтвердить его. Сообщи пользователю, что план ждёт подтверждения, и кратко "
-            f"перечисли, что он делает.")
+            f"Ничего не применено и применено не будет: автоматическое применение отключено. "
+            f"Оператор откроет раздел «Изменения», скопирует команды и выполнит их сам в Winbox. "
+            f"Сообщи пользователю, что план готов, и кратко перечисли, что он делает и на что "
+            f"обратить внимание при выполнении.")
 
 
 # ---------------------------------------------------------------- registry
@@ -371,8 +372,10 @@ SCHEMAS: list[dict[str, Any]] = [
         "name": "propose_change",
         "description": (
             "Propose a configuration change for a device. This places a plan in a queue for a "
-            "human to review and approve - it NEVER applies anything, and you cannot apply it "
-            "yourself. Use it when the user asks for a change rather than a question.\n\n"
+            "human to review - it NEVER applies anything, and you cannot apply it yourself. "
+            "Automatic applying is currently disabled entirely, so the operator will run the "
+            "commands by hand in Winbox; write them so they can be pasted as-is. Use this when "
+            "the user asks for a change rather than a question.\n\n"
             "Write one RouterOS command per line, exactly as they would be typed on the device. "
             "A deterministic validator checks the plan before it is queued and rejects anything "
             "destructive (reboots, resets, user management, scripts, schedulers, firmware, file "

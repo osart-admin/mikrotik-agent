@@ -1,5 +1,22 @@
 """Applying an approved change plan, with a rollback that survives losing the connection.
 
+**DORMANT.** Automatic applying is disabled (`apply_enabled` setting, default off) because the
+rollback safety net cannot be built with a minimal write account on RouterOS 7.22:
+
+* a `/system scheduler` entry carries the policy set of whoever created it, and editing one
+  requires holding *all* of those policies - so the agent cannot even toggle `disabled`, with or
+  without the `policy` right;
+* `/system backup save` is refused for `ssh,read,write`, `+ftp` and `+policy`, and only succeeds
+  with a near-full policy set.
+
+Granting the write account what it would need defeats the separation the design exists for, so
+plans are prepared and validated here and executed by a human in Winbox instead. The code below
+is kept intact: it becomes usable again if a scheduler created with an explicit narrow `policy=`
+turns out to be editable by an account holding that same narrow set - the experiment that was not
+run. See docs/DECISIONS.md.
+
+Original design follows.
+
 The dangerous failure mode is not a bad command - the validator handles that - it is a *good*
 command that cuts the agent off from the device: a firewall rule, an address change, a disabled
 interface. The operator then has no way back in.

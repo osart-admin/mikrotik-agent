@@ -665,6 +665,7 @@ async def change_detail(request: Request, plan_id: int, error: str = ""):
     dev = db.get_device(plan["device_id"])
     return render(request, "change.html", plan=plan, device=dict(dev) if dev else None,
                   findings=json.loads(plan["findings"] or "[]"), error=error,
+                  apply_enabled=(db.get_setting("apply_enabled", "0") or "0") == "1",
                   default_minutes=apply.DEFAULT_ROLLBACK_MINUTES,
                   min_minutes=apply.MIN_ROLLBACK_MINUTES, max_minutes=apply.MAX_ROLLBACK_MINUTES)
 
@@ -688,6 +689,12 @@ async def change_apply(request: Request, plan_id: int, rollback_minutes: int = F
     plan = db.get_plan(plan_id)
     if plan is None or plan["status"] != "pending":
         raise HTTPException(400, "план нельзя применить в текущем состоянии")
+    if (db.get_setting("apply_enabled", "0") or "0") != "1":
+        return RedirectResponse(
+            f"/changes/{plan_id}?error=" + quote(
+                "Автоматическое применение отключено: механизм отката недоступен при минимальных "
+                "правах RouterOS. Выполните команды вручную и отметьте план выполненным."),
+            status_code=303)
     dev = db.get_device(plan["device_id"])
     if dev is None or not dev["write_enabled"]:
         return RedirectResponse(
@@ -704,6 +711,21 @@ async def change_apply(request: Request, plan_id: int, rollback_minutes: int = F
         db.update_plan(plan_id, {"status": "failed", "error": exc.message})
         db.audit(user["username"], "change_apply_failed", f"#{plan_id}: {exc.message}")
         return RedirectResponse(f"/changes/{plan_id}?error=" + quote(exc.message), status_code=303)
+    return RedirectResponse(f"/changes/{plan_id}", status_code=303)
+
+
+@app.post("/changes/{plan_id}/done")
+async def change_done(request: Request, plan_id: int, note: str = Form("")):
+    """Operator ran the commands by hand; record it so the queue reflects reality."""
+    user = auth.require_user(request)
+    plan = db.get_plan(plan_id)
+    if plan is None or plan["status"] != "pending":
+        raise HTTPException(400, "план нельзя отметить выполненным в текущем состоянии")
+    db.update_plan(plan_id, {"status": "applied", "approved_by": user["username"],
+                             "approved_at": db.now_iso(), "applied_at": db.now_iso(),
+                             "confirmed_at": db.now_iso(),
+                             "output": ("Выполнено вручную оператором.\n" + note.strip())[:4000]})
+    db.audit(user["username"], "change_done_manually", f"#{plan_id} {plan['device_slug']}")
     return RedirectResponse(f"/changes/{plan_id}", status_code=303)
 
 

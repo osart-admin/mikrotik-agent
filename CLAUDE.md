@@ -89,8 +89,14 @@ Request/data flow (all in `app/`):
   set outright (resets, reboots, firmware, user management, scripts, schedulers, files, `/import`,
   scripting expressions, `;` chaining), allows a menu whitelist, flags lockout risks. **Rejects,
   never sanitises** - a plan is not quietly edited into something permissible.
-- **`apply.py`** - the only path in the app that writes to a router, reachable solely from a UI
-  action by a person. Commit/confirm: backup under a fixed name -> enable the pre-installed
+- **`apply.py`** - **dormant**: automatic applying is off (`apply_enabled` setting, default 0).
+  On RouterOS 7.22 a `/system scheduler` entry carries its creator's policy set and editing one
+  requires holding all of those policies, so a minimal write account cannot even toggle
+  `disabled`; and `/system backup save` is refused for `ssh,read,write`, `+ftp` and `+policy`.
+  The rollback net therefore cannot be built without handing the write account near-full rights,
+  which defeats the separation. Plans are executed by a human in Winbox (safe mode gives the same
+  protection for free). The code is kept for the untested case of a scheduler created with an
+  explicitly narrow `policy=`. Its design, if revived: Commit/confirm: backup under a fixed name -> enable the pre-installed
   rollback scheduler for N minutes -> run the commands -> the operator confirms the device is
   alive, which disables the scheduler. The scheduler is **pre-installed by admin during write
   onboarding** because creating one that carries commands needs the `policy` right, which also

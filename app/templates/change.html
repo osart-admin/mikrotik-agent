@@ -13,7 +13,7 @@
 Если не подтвердить до <b>{{ plan.rollback_deadline[11:16] if plan.rollback_deadline else '—' }}</b> UTC,
 роутер сам восстановит бэкап <code>{{ plan.backup_name }}</code> и перезагрузится.
 </div>
-{% elif plan.status=='applied' %}<div class="alert ok">Применено и подтверждено {{ plan.confirmed_at[5:16].replace('T',' ') if plan.confirmed_at else '' }}, откат снят.</div>
+{% elif plan.status=='applied' %}<div class="alert ok">Выполнено {{ plan.confirmed_at[5:16].replace('T',' ') if plan.confirmed_at else '' }}, откат снят.</div>
 {% elif plan.status=='rolled_back' %}<div class="alert err">Откачено к бэкапу <code>{{ plan.backup_name }}</code>.</div>
 {% elif plan.status=='rejected' %}<div class="alert">Отклонено пользователем {{ plan.approved_by }}{% if plan.error %}: {{ plan.error }}{% endif %}</div>
 {% elif plan.status=='failed' %}<div class="alert err">Ошибка применения: {{ plan.error }}
@@ -23,7 +23,7 @@
 <div class="row" style="align-items:flex-start">
 <div class="card" style="flex:2">
 <h2>Команды <span class="muted">{{ plan.commands.splitlines()|length }} шт.</span></h2>
-<pre>{{ plan.commands }}</pre>
+<pre id="cmds">{{ plan.commands }}</pre>
 <h3>Обоснование от агента</h3>
 <p class="muted" style="white-space:pre-wrap">{{ plan.rationale }}</p>
 {% if findings %}
@@ -34,21 +34,32 @@
 
 <div class="card" style="flex:1">
 {% if plan.status=='pending' %}
-  {% if device and device.write_enabled %}
+  {% if apply_enabled and device and device.write_enabled %}
   <h2>Применить</h2>
   <form method="post" action="/changes/{{ plan.id }}/apply">
   <div class="field"><label>Откат через, минут ({{ min_minutes }}–{{ max_minutes }})</label>
   <input name="rollback_minutes" type="number" min="{{ min_minutes }}" max="{{ max_minutes }}" value="{{ default_minutes }}"/></div>
-  <p class="muted">Порядок: бэкап → вооружить откат → выполнить команды. Затем вы подтверждаете,
-  что устройство живо, и откат снимается.</p>
-  <button class="btn" onclick="return confirm('Применить план #{{ plan.id }} на {{ plan.device_identity or plan.device_name }}?')">Применить</button>
+  <button class="btn" onclick="return confirm('Применить план #{{ plan.id }}?')">Применить</button>
   </form>
-  {% else %}
-  <div class="alert warn">На устройстве не включён путь записи. Откройте
-  <a href="/devices/{{ plan.device_id }}">карточку устройства</a> и выполните онбординг записи —
-  он создаст отдельного пользователя и задачу отката.</div>
-  {% endif %}
   <h3 style="margin-top:18px">Отклонить</h3>
+  {% else %}
+  <h2>Выполнить вручную</h2>
+  <p class="muted">Автоматическое применение отключено: на RouterOS запись планировщика несёт
+  права своего создателя, и минимальному пользователю её не переключить — значит страховку
+  в виде автоотката построить нельзя. Команды проверены валидатором, выполните их сами.</p>
+  <ol class="muted">
+    <li>Winbox → New Terminal на <b>{{ plan.device_identity or plan.device_name }}</b></li>
+    <li>Нажмите <kbd>Ctrl+X</kbd> — включится safe mode, изменения откатятся сами, если связь оборвётся</li>
+    <li>Вставьте команды</li>
+    <li>Убедитесь, что всё работает, и нажмите <kbd>Ctrl+X</kbd> ещё раз, чтобы зафиксировать</li>
+  </ol>
+  <button class="btn sec" type="button" onclick="copyCommands()">Скопировать команды</button>
+  <form method="post" action="/changes/{{ plan.id }}/done" style="margin-top:14px">
+  <div class="field"><label>Отметить выполненным</label>
+  <input name="note" placeholder="заметка (необязательно)"/></div>
+  <button class="btn">Выполнил вручную</button></form>
+  <h3 style="margin-top:18px">Или отклонить</h3>
+  {% endif %}
   <form method="post" action="/changes/{{ plan.id }}/reject">
   <div class="field"><input name="reason" placeholder="причина (необязательно)"/></div>
   <button class="btn danger">Отклонить план</button></form>
@@ -85,3 +96,11 @@
 <div class="card"><h2>Протокол выполнения</h2><pre style="max-height:400px">{{ plan.output }}</pre></div>
 {% endif %}
 {% endblock %}
+
+{% block script %}<script>
+function copyCommands(){
+  const btn=event.target, t=btn.textContent;
+  navigator.clipboard.writeText(document.getElementById('cmds').textContent.trim())
+    .then(()=>{ btn.textContent='Скопировано'; setTimeout(()=>btn.textContent=t,1500); });
+}
+</script>{% endblock %}
