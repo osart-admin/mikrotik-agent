@@ -197,10 +197,10 @@ def test_manual_script_matches_the_automated_path(logged_in):
     from app import collector, onboard as ob
 
     pub = collector.public_keys()["ed25519"]
-    script = ob.manual_script("agent", pub, "ed25519", "10.10.0.54/32")
+    script = ob.manual_script("agent", pub, "ed25519", "192.0.2.10/32")
     assert f"/user group add name={ob.GROUP} policy={ob.GROUP_POLICY}" in script
     assert "write" not in ob.GROUP_POLICY and "sensitive" not in ob.GROUP_POLICY
-    assert "address=10.10.0.54/32" in script
+    assert "address=192.0.2.10/32" in script
     assert pub in script
     assert "/user ssh-keys import user=agent" in script
     assert script.count("\n") == 4
