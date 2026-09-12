@@ -700,6 +700,10 @@ async def change_apply(request: Request, plan_id: int, rollback_minutes: int = F
     except apply.ApplyError as exc:
         db.audit(user["username"], "change_apply_failed", f"#{plan_id}: {exc}")
         return RedirectResponse(f"/changes/{plan_id}?error=" + quote(str(exc)), status_code=303)
+    except SSHError as exc:
+        db.update_plan(plan_id, {"status": "failed", "error": exc.message})
+        db.audit(user["username"], "change_apply_failed", f"#{plan_id}: {exc.message}")
+        return RedirectResponse(f"/changes/{plan_id}?error=" + quote(exc.message), status_code=303)
     return RedirectResponse(f"/changes/{plan_id}", status_code=303)
 
 
@@ -723,6 +727,10 @@ async def change_rollback(request: Request, plan_id: int):
     plan = db.get_plan(plan_id)
     if plan is None or plan["status"] not in ("awaiting_confirm", "failed"):
         raise HTTPException(400, "для этого плана откат недоступен")
+    if plan["status"] == "failed" and not plan["backup_name"]:
+        return RedirectResponse(
+            f"/changes/{plan_id}?error=" + quote("Бэкап не создавался — откатывать нечего, конфигурация не менялась."),
+            status_code=303)
     try:
         await apply.rollback_now(plan, user["username"])
     except apply.ApplyError as exc:

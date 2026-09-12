@@ -26,6 +26,25 @@ GROUP_POLICY = "ssh,read"
 WRITE_GROUP = "mikrotik-agent-rw"
 WRITE_GROUP_POLICY = "ssh,read,write"
 
+# Every policy RouterOS knows, so a group can be pinned to exactly what we intend.
+ALL_POLICIES = ("local", "telnet", "ssh", "ftp", "reboot", "read", "write", "policy", "test",
+                "winbox", "password", "web", "sniff", "sensitive", "api", "romon", "rest-api")
+
+
+def exact_policy(granted: str) -> str:
+    """Turn "ssh,read" into "ssh,read,!local,!telnet,..." - every other policy explicitly denied.
+
+    `/user group add policy=...` denies unlisted policies, but `/user group set policy=...` does
+    NOT: on RouterOS 7.22 a set with only positive entries leaves previously granted policies in
+    place. Verified on hardware - a group that already had wider rights silently kept them, so
+    "existing group, policy reset" was a lie. Always send the negations.
+    """
+    keep = [p.strip() for p in granted.split(",") if p.strip()]
+    unknown = [p for p in keep if p not in ALL_POLICIES]
+    if unknown:
+        raise ValueError(f"unknown RouterOS policy: {', '.join(unknown)}")
+    return ",".join(keep + [f"!{p}" for p in ALL_POLICIES if p not in keep])
+
 
 def manual_script(agent_user: str, pubkey: str, key_kind: str, allowed_address: str = "") -> str:
     """The same steps onboard() performs, as commands to paste into the router's terminal.
@@ -36,12 +55,30 @@ def manual_script(agent_user: str, pubkey: str, key_kind: str, allowed_address: 
     addr = f" address={allowed_address}" if allowed_address else ""
     fname = f"{agent_user}-{key_kind}.pub"
     return "\n".join([
-        f"/user group add name={GROUP} policy={GROUP_POLICY}",
+        f"/user group add name={GROUP} policy={exact_policy(GROUP_POLICY)}",
         f'/user add name={agent_user} group={GROUP}{addr} password="{pysecrets.token_urlsafe(24)}"',
         f'/file add name="{fname}" contents="{pubkey}"',
         f"/user ssh-keys import user={agent_user} public-key-file={fname}",
         f'/file remove [ find name="{fname}" ]',
     ])
+
+
+async def _assert_group_policy(r: RouterSSH, group: str, expected: str) -> None:
+    """Read the group back and fail loudly if it is wider than intended.
+
+    Silently keeping extra rights is the failure mode this guards against; the operator must not
+    be told a group is read-only when it is not.
+    """
+    rows = parse_print_terse(await r.run(f'/user group print terse where name="{group}"'))
+    if not rows:
+        raise SSHError("error", f"группа {group} не найдена после настройки")
+    actual = {p for p in rows[0].get("policy", "").split(",") if p and not p.startswith("!")}
+    want = {p.strip() for p in expected.split(",") if p.strip()}
+    if actual != want:
+        extra = ", ".join(sorted(actual - want)) or "—"
+        raise SSHError("error",
+                       f"группа {group} получила не те политики: лишние [{extra}], "
+                       f"ожидалось [{expected}]. Исправьте вручную на устройстве.")
 
 
 async def _put_file(r: RouterSSH, name: str, content: str, major: int) -> None:
@@ -77,13 +114,14 @@ async def onboard(dev: sqlite3.Row, admin_user: str, admin_password: str, agent_
 
         groups = {g.get("name") for g in parse_print_terse(await r.run("/user group print terse"))}
         if GROUP in groups:
-            await r.run(f'/user group set [ find name="{GROUP}" ] policy={GROUP_POLICY}')
+            await r.run(f'/user group set [ find name="{GROUP}" ] policy={exact_policy(GROUP_POLICY)}')
             log.append(f"group {GROUP} exists, policy reset to {GROUP_POLICY}")
         else:
-            out = await r.run(f"/user group add name={GROUP} policy={GROUP_POLICY}")
+            out = await r.run(f"/user group add name={GROUP} policy={exact_policy(GROUP_POLICY)}")
             if out.strip():
                 raise SSHError("error", f"group add failed: {out[:200]}")
             log.append(f"group {GROUP} created with policy {GROUP_POLICY}")
+        await _assert_group_policy(r, GROUP, GROUP_POLICY)
 
         users = {u.get("name") for u in parse_print_terse(await r.run("/user print terse"))}
         addr = f" address={allowed_address}" if allowed_address else ""
@@ -138,13 +176,14 @@ async def onboard_write(dev: sqlite3.Row, admin_user: str, admin_password: str,
 
         groups = {g.get("name") for g in parse_print_terse(await r.run("/user group print terse"))}
         if WRITE_GROUP in groups:
-            await r.run(f'/user group set [ find name="{WRITE_GROUP}" ] policy={WRITE_GROUP_POLICY}')
+            await r.run(f'/user group set [ find name="{WRITE_GROUP}" ] policy={exact_policy(WRITE_GROUP_POLICY)}')
             log.append(f"группа {WRITE_GROUP} уже была, политики приведены к {WRITE_GROUP_POLICY}")
         else:
-            out = await r.run(f"/user group add name={WRITE_GROUP} policy={WRITE_GROUP_POLICY}")
+            out = await r.run(f"/user group add name={WRITE_GROUP} policy={exact_policy(WRITE_GROUP_POLICY)}")
             if out.strip():
                 raise SSHError("error", f"не удалось создать группу: {out[:200]}")
             log.append(f"создана группа {WRITE_GROUP}: {WRITE_GROUP_POLICY} — без policy и sensitive")
+        await _assert_group_policy(r, WRITE_GROUP, WRITE_GROUP_POLICY)
 
         users = {u.get("name") for u in parse_print_terse(await r.run("/user print terse"))}
         addr = f" address={allowed_address}" if allowed_address else ""

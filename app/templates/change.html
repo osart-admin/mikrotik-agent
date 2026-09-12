@@ -16,7 +16,8 @@
 {% elif plan.status=='applied' %}<div class="alert ok">Применено и подтверждено {{ plan.confirmed_at[5:16].replace('T',' ') if plan.confirmed_at else '' }}, откат снят.</div>
 {% elif plan.status=='rolled_back' %}<div class="alert err">Откачено к бэкапу <code>{{ plan.backup_name }}</code>.</div>
 {% elif plan.status=='rejected' %}<div class="alert">Отклонено пользователем {{ plan.approved_by }}{% if plan.error %}: {{ plan.error }}{% endif %}</div>
-{% elif plan.status=='failed' %}<div class="alert err">Ошибка применения: {{ plan.error }}</div>
+{% elif plan.status=='failed' %}<div class="alert err">Ошибка применения: {{ plan.error }}
+{% if not plan.backup_name %}<br/><b>Конфигурация не изменена</b> — сбой произошёл до того, как что-либо трогали.{% endif %}</div>
 {% endif %}
 
 <div class="row" style="align-items:flex-start">
@@ -62,9 +63,17 @@
   Откат сработает сам.</p>
 
 {% elif plan.status=='failed' %}
+  {% if plan.backup_name %}
   <h2>Откат</h2>
+  <p class="muted">Бэкап <code>{{ plan.backup_name }}</code> был снят до изменений — можно вернуться к нему.
+  Устройство перезагрузится.</p>
   <form method="post" action="/changes/{{ plan.id }}/rollback">
-  <button class="btn danger" style="width:100%">Восстановить бэкап</button></form>
+  <button class="btn danger" style="width:100%" onclick="return confirm('Восстановить бэкап? Устройство перезагрузится.')">Восстановить бэкап</button></form>
+  {% else %}
+  <h2>Откат не нужен</h2>
+  <p class="muted">Ошибка произошла до создания бэкапа, конфигурация устройства не менялась.
+  Исправьте причину и примените план заново.</p>
+  {% endif %}
 {% else %}
   <h2>Действий не требуется</h2>
   <p class="muted">План в состоянии «{{ plan.status }}».</p>

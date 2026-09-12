@@ -97,17 +97,39 @@ async def apply_plan(plan: dict[str, Any], rollback_minutes: int, confirmer: str
         raise ApplyError("план пуст")
 
     transcript: list[str] = []
+    # Tracked so a failure can say truthfully how far it got. Offering "restore the backup" when
+    # the backup step itself failed would restore a file that does not exist, or a stale one.
+    backup_ok = False
+    armed_ok = False
+    changed = False
+
+    def _fail(message: str, kind: str) -> None:
+        db.update_plan(plan["id"], {
+            "status": "failed", "error": message, "output": "\n\n".join(transcript),
+            # Only claim a backup when one was actually written.
+            "backup_name": backup if backup_ok else "",
+        })
+        log.warning("plan #%s failed on %s (%s): %s", plan["id"], dev["slug"], kind, message)
+
     try:
         async with RouterSSH(dev["host"], dev["port"], write_credentials(dev)) as r:
+            # Everything that can fail without touching the configuration is checked first, so a
+            # misconfigured device leaves the plan exactly as it was.
             armed = await r.run(f'/system scheduler print count-only where name="{SCHEDULER_NAME}"')
+            if "not enough permissions" in armed.lower():
+                raise ApplyError(
+                    "пользователь записи не видит задачу отката — проверьте его группу. "
+                    "Ничего не изменено."
+                )
             if armed.strip() in ("0", ""):
                 raise ApplyError(
                     "на устройстве нет задачи отката — выполните онбординг записи. "
-                    "Без неё применять изменения небезопасно."
+                    "Без неё применять изменения небезопасно. Ничего не изменено."
                 )
 
             out = await r.run(f"/system backup save name={backup} dont-encrypt=yes", timeout=120)
             _check(out, "создание бэкапа")
+            backup_ok = True
             transcript.append(f"$ /system backup save name={backup}\n{out.strip()}")
 
             # Armed BEFORE the change, so a command that cuts us off is still recovered from.
@@ -115,22 +137,39 @@ async def apply_plan(plan: dict[str, Any], rollback_minutes: int, confirmer: str
             out = await r.run(f'/system scheduler set [find name="{SCHEDULER_NAME}"] '
                               f'interval={rollback_minutes}m disabled=no')
             _check(out, "постановка отката")
+            armed_ok = True
             transcript.append(f"$ откат через {rollback_minutes} мин вооружён")
 
             for cmd in commands:
                 out = await r.run(cmd, timeout=60)
+                changed = True
                 transcript.append(f"$ {redact(cmd)}\n{out.strip()}")
                 _check(out, f"команда «{redact(cmd)[:60]}»")
     except SSHError as exc:
-        db.update_plan(plan["id"], {"status": "failed", "error": f"{exc.kind}: {exc.message}",
-                                    "output": "\n\n".join(transcript), "backup_name": backup})
+        _fail(f"{exc.kind}: {exc.message}", "ssh")
+        if armed_ok:
+            raise ApplyError(
+                f"связь с устройством потеряна ({exc.kind}). Откат вооружён — роутер "
+                f"восстановится сам через {rollback_minutes} мин, вмешиваться не нужно."
+            ) from exc
         raise ApplyError(
-            f"связь с устройством потеряна ({exc.kind}). Если откат был вооружён, роутер "
-            f"восстановится сам через {rollback_minutes} мин."
+            f"связь с устройством потеряна ({exc.kind}) до применения изменений. "
+            f"Конфигурация не тронута."
         ) from exc
     except ApplyError as exc:
-        db.update_plan(plan["id"], {"status": "failed", "error": str(exc),
-                                    "output": "\n\n".join(transcript), "backup_name": backup})
+        _fail(str(exc), "apply")
+        if armed_ok and changed:
+            raise ApplyError(
+                f"{exc} Часть команд уже выполнена, откат вооружён на {rollback_minutes} мин — "
+                f"либо откатите сейчас, либо дождитесь автоматического отката."
+            ) from exc
+        if armed_ok:
+            # Nothing was changed, so leave the device clean rather than waiting for a reboot.
+            try:
+                async with RouterSSH(dev["host"], dev["port"], write_credentials(dev)) as r2:
+                    await r2.run(f'/system scheduler set [find name="{SCHEDULER_NAME}"] disabled=yes')
+            except SSHError:
+                log.warning("plan #%s: could not disarm rollback after a no-op failure", plan["id"])
         raise
 
     deadline = (datetime.now(timezone.utc) + timedelta(minutes=rollback_minutes)).replace(microsecond=0)

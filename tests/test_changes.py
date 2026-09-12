@@ -204,3 +204,87 @@ def test_apply_clamps_the_rollback_window():
     assert apply.MIN_ROLLBACK_MINUTES >= 2
     assert apply.MAX_ROLLBACK_MINUTES <= 60
     assert apply.MIN_ROLLBACK_MINUTES <= apply.DEFAULT_ROLLBACK_MINUTES <= apply.MAX_ROLLBACK_MINUTES
+
+
+# --------------------------------------------------------------- failure honesty
+
+def test_failed_plan_without_a_backup_offers_no_rollback(tmp_path):
+    """A failure before the backup step must not claim a backup exists."""
+    import re
+    from pathlib import Path
+
+    src = (Path(__file__).resolve().parents[1] / "app" / "apply.py").read_text()
+    # backup_name is only persisted when the backup actually succeeded.
+    assert '"backup_name": backup if backup_ok else ""' in src
+    assert "backup_ok = True" in src
+    # and it is set only after the save was checked
+    save_idx = src.index("/system backup save")
+    check_idx = src.index('_check(out, "создание бэкапа")')
+    ok_idx = src.index("backup_ok = True")
+    assert save_idx < check_idx < ok_idx
+
+
+def test_preflight_checks_happen_before_anything_is_touched():
+    """Scheduler presence is verified before the backup and before arming."""
+    from pathlib import Path
+
+    src = (Path(__file__).resolve().parents[1] / "app" / "apply.py").read_text()
+    body = src[src.index("async def apply_plan"):]
+    sched_check = body.index("scheduler print count-only")
+    backup = body.index("/system backup save")
+    arm = body.index("disabled=no")
+    first_cmd = body.index("for cmd in commands:")
+    assert sched_check < backup < arm < first_cmd
+
+
+def test_rollback_is_armed_before_the_first_command():
+    """The whole point: a command that cuts us off must already be recoverable."""
+    from pathlib import Path
+
+    src = (Path(__file__).resolve().parents[1] / "app" / "apply.py").read_text()
+    body = src[src.index("async def apply_plan"):]
+    assert body.index("armed_ok = True") < body.index("for cmd in commands:")
+
+
+# --------------------------------------------------------------- RouterOS policy semantics
+
+def test_exact_policy_denies_everything_not_granted():
+    """`/user group set policy=` with only positives does NOT drop previously granted rights on
+    RouterOS 7.22 - verified on hardware. Every policy must be stated explicitly."""
+    from app import onboard
+
+    out = onboard.exact_policy("ssh,read")
+    granted = [p for p in out.split(",") if not p.startswith("!")]
+    denied = [p[1:] for p in out.split(",") if p.startswith("!")]
+    assert granted == ["ssh", "read"]
+    assert set(granted) | set(denied) == set(onboard.ALL_POLICIES)
+    for dangerous in ("write", "policy", "sensitive", "ftp", "test", "reboot"):
+        assert dangerous in denied
+
+
+def test_exact_policy_rejects_a_typo():
+    from app import onboard
+
+    with pytest.raises(ValueError):
+        onboard.exact_policy("ssh,raed")
+
+
+def test_every_group_command_pins_the_full_policy_set():
+    """A bare positive list would silently leave a pre-existing group wider than intended."""
+    import re
+    from pathlib import Path
+
+    src = (Path(__file__).resolve().parents[1] / "app" / "onboard.py").read_text()
+    commands = [l for l in src.splitlines()
+                if ("/user group add" in l or "/user group set" in l) and "policy={" in l]
+    assert commands, "no group commands found - did onboard.py change shape?"
+    for line in commands:
+        assert "exact_policy(" in line, f"policy not pinned: {line.strip()}"
+
+
+def test_group_policy_is_verified_after_being_set():
+    from pathlib import Path
+
+    src = (Path(__file__).resolve().parents[1] / "app" / "onboard.py").read_text()
+    assert src.count("await _assert_group_policy(") == 2
+    assert "actual != want" in src
