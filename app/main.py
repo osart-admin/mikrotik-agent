@@ -14,7 +14,10 @@ from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 from starlette.middleware.sessions import SessionMiddleware
 
-from . import agent, auth, collector, db, live, llm, onboard, pricing, rsc, scheduler, scrub, store, tools, winbox_import
+from urllib.parse import quote
+
+from . import (agent, apply, auth, collector, changes as changes_mod, db, live, llm, onboard,
+               pricing, rsc, scheduler, scrub, store, tools, winbox_import)
 from .config import APP_TIMEZONE, DATA_DIR
 from .ssh import SSHError, forget_host, known_host_entry
 
@@ -73,6 +76,7 @@ app.add_middleware(
 def render(request: Request, name: str, **ctx: Any) -> HTMLResponse:
     ctx.setdefault("user", auth.current_user(request))
     ctx.setdefault("collecting", collector.is_running())
+    ctx.setdefault("pending_changes", db.count_pending_plans())
     return templates.TemplateResponse(request, name, ctx)
 
 
@@ -174,6 +178,7 @@ async def device_detail(request: Request, device_id: int):
                   hostkey=bool(known_host_entry(dev["host"], dev["port"])),
                   pubkeys=collector.public_keys(),
                   live_queries=[(k, q.label) for k, q in live.QUERIES.items()],
+                  write_user=db.get_setting("write_user", "agent-rw"),
                   manual_ros7=onboard.manual_script("agent", collector.public_keys()["ed25519"], "ed25519"),
                   manual_ros6=onboard.manual_script("agent", collector.public_keys()["rsa"], "rsa"))
 
@@ -637,3 +642,120 @@ async def costs_page(request: Request):
                   recent=db.recent_usage(60),
                   budget=agent.budget_status(),
                   fmt_usd=pricing.fmt_usd)
+
+
+# ---------------------------------------------------------------- change queue (phase 4)
+
+@app.get("/changes", response_class=HTMLResponse)
+async def changes_page(request: Request, error: str = "", ok: str = ""):
+    plans = db.list_plans()
+    return render(request, "changes.html", plans=plans,
+                  pending=[p for p in plans if p["status"] == "pending"],
+                  awaiting=[p for p in plans if p["status"] == "awaiting_confirm"],
+                  error=error, ok=ok,
+                  default_minutes=apply.DEFAULT_ROLLBACK_MINUTES,
+                  min_minutes=apply.MIN_ROLLBACK_MINUTES, max_minutes=apply.MAX_ROLLBACK_MINUTES)
+
+
+@app.get("/changes/{plan_id}", response_class=HTMLResponse)
+async def change_detail(request: Request, plan_id: int, error: str = ""):
+    plan = db.get_plan(plan_id)
+    if plan is None:
+        raise HTTPException(404, "план не найден")
+    dev = db.get_device(plan["device_id"])
+    return render(request, "change.html", plan=plan, device=dict(dev) if dev else None,
+                  findings=json.loads(plan["findings"] or "[]"), error=error,
+                  default_minutes=apply.DEFAULT_ROLLBACK_MINUTES,
+                  min_minutes=apply.MIN_ROLLBACK_MINUTES, max_minutes=apply.MAX_ROLLBACK_MINUTES)
+
+
+@app.post("/changes/{plan_id}/reject")
+async def change_reject(request: Request, plan_id: int, reason: str = Form("")):
+    user = auth.require_user(request)
+    plan = db.get_plan(plan_id)
+    if plan is None or plan["status"] != "pending":
+        raise HTTPException(400, "план нельзя отклонить в текущем состоянии")
+    db.update_plan(plan_id, {"status": "rejected", "approved_by": user["username"],
+                             "approved_at": db.now_iso(), "error": reason.strip()[:500]})
+    db.audit(user["username"], "change_rejected", f"#{plan_id} {plan['device_slug']}: {reason[:200]}")
+    return RedirectResponse("/changes", status_code=303)
+
+
+@app.post("/changes/{plan_id}/apply")
+async def change_apply(request: Request, plan_id: int, rollback_minutes: int = Form(apply.DEFAULT_ROLLBACK_MINUTES)):
+    """Apply an approved plan. This is the only path in the app that writes to a router."""
+    user = auth.require_user(request)
+    plan = db.get_plan(plan_id)
+    if plan is None or plan["status"] != "pending":
+        raise HTTPException(400, "план нельзя применить в текущем состоянии")
+    dev = db.get_device(plan["device_id"])
+    if dev is None or not dev["write_enabled"]:
+        return RedirectResponse(
+            f"/changes/{plan_id}?error=" + quote("На устройстве не включён путь записи — выполните онбординг записи на его странице."),
+            status_code=303)
+    db.update_plan(plan_id, {"status": "applying", "approved_by": user["username"], "approved_at": db.now_iso()})
+    db.audit(user["username"], "change_apply", f"#{plan_id} {plan['device_slug']}")
+    try:
+        await apply.apply_plan(plan, rollback_minutes, user["username"])
+    except apply.ApplyError as exc:
+        db.audit(user["username"], "change_apply_failed", f"#{plan_id}: {exc}")
+        return RedirectResponse(f"/changes/{plan_id}?error=" + quote(str(exc)), status_code=303)
+    return RedirectResponse(f"/changes/{plan_id}", status_code=303)
+
+
+@app.post("/changes/{plan_id}/confirm")
+async def change_confirm(request: Request, plan_id: int):
+    user = auth.require_user(request)
+    plan = db.get_plan(plan_id)
+    if plan is None or plan["status"] != "awaiting_confirm":
+        raise HTTPException(400, "план не ждёт подтверждения")
+    try:
+        await apply.confirm_plan(plan, user["username"])
+    except (apply.ApplyError, SSHError) as exc:
+        return RedirectResponse(f"/changes/{plan_id}?error=" + quote(str(exc)), status_code=303)
+    db.audit(user["username"], "change_confirmed", f"#{plan_id} {plan['device_slug']}")
+    return RedirectResponse(f"/changes/{plan_id}", status_code=303)
+
+
+@app.post("/changes/{plan_id}/rollback")
+async def change_rollback(request: Request, plan_id: int):
+    user = auth.require_user(request)
+    plan = db.get_plan(plan_id)
+    if plan is None or plan["status"] not in ("awaiting_confirm", "failed"):
+        raise HTTPException(400, "для этого плана откат недоступен")
+    try:
+        await apply.rollback_now(plan, user["username"])
+    except apply.ApplyError as exc:
+        return RedirectResponse(f"/changes/{plan_id}?error=" + quote(str(exc)), status_code=303)
+    db.audit(user["username"], "change_rolled_back", f"#{plan_id} {plan['device_slug']}")
+    return RedirectResponse(f"/changes/{plan_id}", status_code=303)
+
+
+@app.post("/api/devices/{device_id}/onboard-write")
+async def device_onboard_write(request: Request, device_id: int, admin_user: str = Form(...),
+                               admin_password: str = Form(...), write_user: str = Form("agent-rw"),
+                               allowed_address: str = Form("")):
+    user = auth.require_user(request)
+    dev = db.get_device(device_id)
+    if dev is None:
+        raise HTTPException(404, "device not found")
+    try:
+        steps = await onboard.onboard_write(dev, admin_user, admin_password,
+                                            write_user.strip() or "agent-rw", allowed_address.strip())
+    except SSHError as exc:
+        db.audit(user["username"], "onboard_write_failed", f"{dev['slug']}: {exc.message}")
+        return JSONResponse({"ok": False, "message": exc.message}, status_code=200)
+    db.audit(user["username"], "onboard_write", f"{dev['slug']} -> {write_user}")
+    return {"ok": True, "steps": steps}
+
+
+@app.post("/api/devices/{device_id}/disable-write")
+async def device_disable_write(request: Request, device_id: int):
+    """Turn the write path off for a device without touching the router."""
+    user = auth.require_user(request)
+    dev = db.get_device(device_id)
+    if dev is None:
+        raise HTTPException(404, "device not found")
+    db.update_device(device_id, {"write_enabled": 0})
+    db.audit(user["username"], "write_disabled", dev["slug"])
+    return {"ok": True}

@@ -77,6 +77,47 @@
 
 {% if device.status == 'ok' %}
 <div class="card">
+<h2>Изменение конфигурации
+  {% if device.write_enabled %}<span class="tag warn">включено</span>{% else %}<span class="tag">выключено</span>{% endif %}
+</h2>
+{% if device.write_enabled %}
+  <p class="muted">Агент может предлагать изменения для этого устройства; применяете их вы вручную
+  в разделе <a href="/changes">Изменения</a>. Перед применением снимается бэкап и вооружается откат.</p>
+  <button class="btn danger sm" onclick="disableWrite()">Выключить путь записи</button>
+  <p class="muted" style="margin-top:8px">Выключение действует только в приложении — пользователь
+  <code>{{ write_user }}</code> и задача отката на роутере останутся. Удалять их, если нужно, вручную.</p>
+{% else %}
+  <p class="muted">Сейчас агент может только читать это устройство. Чтобы разрешить изменения,
+  нужен <b>отдельный</b> пользователь с правом записи — учётная запись сбора останется read-only.
+  Разово подключимся под админом и создадим:</p>
+  <ul class="muted">
+    <li>группу <code>mikrotik-agent-rw</code> с политиками <code>ssh,read,write</code> — без
+        <code>policy</code>, то есть без управления пользователями;</li>
+    <li>пользователя <code>agent-rw</code> с ключом агента;</li>
+    <li><b>выключенную</b> задачу отката <code>mikrotik-agent-rollback</code>. Её создаёт админ,
+        потому что планировщик с командой требует права <code>policy</code>; дальше агент только
+        включает и выключает её, а сам скрипт изменить не может.</li>
+  </ul>
+  <form onsubmit="return onboardWrite(event)" autocomplete="off">
+  <input type="text" name="_nofill_u" style="display:none" tabindex="-1" aria-hidden="true"/>
+  <input type="password" name="_nofill_p" style="display:none" tabindex="-1" aria-hidden="true"/>
+  <div class="row">
+  <div class="field"><label>Админ-логин <span class="muted">— от роутера</span></label>
+  <input name="admin_user" value="admin" required autocomplete="off" data-1p-ignore data-lpignore="true" spellcheck="false"/></div>
+  <div class="field"><label>Админ-пароль <span class="muted">— от роутера</span></label>
+  <input type="text" class="secret" name="admin_password" required autocomplete="off" data-1p-ignore data-lpignore="true" spellcheck="false"/></div>
+  </div>
+  <div class="row">
+  <div class="field"><label>Пользователь записи</label><input name="write_user" value="agent-rw"/></div>
+  <div class="field"><label>Ограничить источник (необязательно)</label><input name="allowed_address" placeholder="IP этого сервиса, напр. 10.0.0.5/32"/></div>
+  </div>
+  <button class="btn">Включить путь записи</button>
+  </form>
+  <div id="wonb"></div>
+{% endif %}
+</div>
+
+<div class="card">
 <h2>Живое состояние <span class="muted">читается с роутера сейчас, не из сохранённого конфига</span></h2>
 <div class="row" style="align-items:flex-end">
 <div class="field" style="flex:2"><label>Что показать</label>
@@ -157,6 +198,22 @@ function del(){
   document.body.appendChild(f); f.submit();
 }
 async function forget(){ await post('/api/devices/{{ device.id }}/forget-hostkey'); location.reload(); }
+async function disableWrite(){
+  if(!confirm('Выключить возможность изменять конфигурацию этого устройства?')) return;
+  await post('/api/devices/{{ device.id }}/disable-write');
+  location.reload();
+}
+async function onboardWrite(e){
+  e.preventDefault();
+  const el=document.getElementById('wonb');
+  el.innerHTML='<div class="alert warn">Настраиваю путь записи…</div>';
+  const r=await (await fetch('/api/devices/{{ device.id }}/onboard-write',{method:'POST',body:new FormData(e.target)})).json();
+  el.innerHTML = r.ok
+    ? '<div class="alert ok">'+r.steps.map(s=>'✓ '+s).join('<br/>')+'</div>'
+    : '<div class="alert err">'+r.message+'</div>';
+  if(r.ok) setTimeout(()=>location.reload(),2500);
+  return false;
+}
 async function useAgentKey(){
   const el=document.getElementById('switchmsg');
   el.innerHTML='<div class="alert warn">Проверяю вход по ключу…</div>';

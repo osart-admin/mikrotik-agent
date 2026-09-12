@@ -21,6 +21,11 @@ GROUP = "mikrotik-agent-ro"
 #                 Add it only when live diagnostics (ping/traceroute) are actually implemented.
 GROUP_POLICY = "ssh,read"
 
+# Write path (phase 4). Deliberately no 'policy': that would grant user management. The rollback
+# scheduler is therefore created once here, by the admin, and the write account only toggles it.
+WRITE_GROUP = "mikrotik-agent-rw"
+WRITE_GROUP_POLICY = "ssh,read,write"
+
 
 def manual_script(agent_user: str, pubkey: str, key_kind: str, allowed_address: str = "") -> str:
     """The same steps onboard() performs, as commands to paste into the router's terminal.
@@ -107,4 +112,83 @@ async def onboard(dev: sqlite3.Row, admin_user: str, admin_password: str, agent_
     log.append(f"verified key login as {agent_user} (identity {ident})")
     db.update_device(dev["id"], {"username": agent_user, "auth": "key", "password_enc": None, "ros_version": version, "status": "ok", "status_message": "onboarded"})
     log.append("device switched to key auth")
+    return log
+
+
+async def onboard_write(dev: sqlite3.Row, admin_user: str, admin_password: str,
+                        write_user: str = "agent-rw", allowed_address: str = "") -> list[str]:
+    """Provision the write account and the pre-installed rollback scheduler.
+
+    Separate from read onboarding and never implied by it: a device becomes changeable only when
+    the operator asks for it explicitly, per device.
+    """
+    from .apply import BACKUP_NAME, SCHEDULER_NAME
+
+    log: list[str] = []
+    pubs = collector.public_keys()
+    async with RouterSSH(dev["host"], dev["port"], Credentials(admin_user, password=admin_password)) as r:
+        res = parse_print(await r.run("/system resource print"))
+        version = (res.get("version") or "?").split(" ")[0]
+        major = int(version.split(".")[0]) if version[:1].isdigit() else 7
+        key_kind = "rsa" if major < 7 else "ed25519"
+        pub = pubs[key_kind]
+        if not pub:
+            raise SSHError("error", "no public key generated yet")
+        log.append(f"подключились как {admin_user}: RouterOS {version}")
+
+        groups = {g.get("name") for g in parse_print_terse(await r.run("/user group print terse"))}
+        if WRITE_GROUP in groups:
+            await r.run(f'/user group set [ find name="{WRITE_GROUP}" ] policy={WRITE_GROUP_POLICY}')
+            log.append(f"группа {WRITE_GROUP} уже была, политики приведены к {WRITE_GROUP_POLICY}")
+        else:
+            out = await r.run(f"/user group add name={WRITE_GROUP} policy={WRITE_GROUP_POLICY}")
+            if out.strip():
+                raise SSHError("error", f"не удалось создать группу: {out[:200]}")
+            log.append(f"создана группа {WRITE_GROUP}: {WRITE_GROUP_POLICY} — без policy и sensitive")
+
+        users = {u.get("name") for u in parse_print_terse(await r.run("/user print terse"))}
+        addr = f" address={allowed_address}" if allowed_address else ""
+        if write_user in users:
+            await r.run(f'/user set [ find name="{write_user}" ] group={WRITE_GROUP}{addr}')
+            log.append(f"пользователь {write_user} уже был, переведён в {WRITE_GROUP}")
+        else:
+            pw = pysecrets.token_urlsafe(24)
+            out = await r.run(f'/user add name={write_user} group={WRITE_GROUP} password="{pw}"{addr}')
+            if out.strip() and "error" in out.lower():
+                raise SSHError("error", f"не удалось создать пользователя: {out[:200]}")
+            log.append(f"создан пользователь {write_user} (вход только по ключу)")
+
+        fname = f"{write_user}-{key_kind}.pub"
+        await _put_file(r, fname, pub, major)
+        out = await r.run(f"/user ssh-keys import user={write_user} public-key-file={fname}")
+        if out.strip() and "already" not in out.lower():
+            raise SSHError("error", f"не удалось импортировать ключ: {out[:200]}")
+        await r.run(f'/file remove [ find name="{fname}" ]')
+        log.append(f"ключ {key_kind} импортирован для {write_user}")
+
+        # Created here, by admin, because a scheduler carrying commands needs the 'policy' right.
+        # Left disabled; the write account only ever flips disabled/interval, never the script.
+        await r.run(f'/system scheduler remove [find name="{SCHEDULER_NAME}"]')
+        out = await r.run(
+            f'/system scheduler add name="{SCHEDULER_NAME}" start-time=startup interval=10m '
+            f'disabled=yes on-event="/system backup load name={BACKUP_NAME} password=\\"\\""'
+        )
+        if out.strip():
+            raise SSHError("error", f"не удалось поставить задачу отката: {out[:200]}")
+        log.append(f"установлена задача отката {SCHEDULER_NAME} — выключена, восстанавливает {BACKUP_NAME}")
+
+    key_secret = collector.KEY_RSA if key_kind == "rsa" else collector.KEY_ED25519
+    creds = Credentials(write_user, key_pems=[db.get_secret(key_secret) or ""])
+    async with RouterSSH(dev["host"], dev["port"], creds) as r:
+        probe = await r.run("/system note set show-at-login=no")
+        if "not enough permissions" in probe.lower():
+            raise SSHError("error", f"{write_user} не может писать — проверьте группу {WRITE_GROUP}")
+        armed = await r.run(f'/system scheduler print count-only where name="{SCHEDULER_NAME}"')
+        if armed.strip() in ("0", ""):
+            raise SSHError("error", "задача отката не найдена после установки")
+    log.append(f"проверено: {write_user} входит по ключу, может писать, задача отката на месте")
+
+    db.set_setting("write_user", write_user)
+    db.update_device(dev["id"], {"write_enabled": 1})
+    log.append("путь записи на устройстве включён")
     return log

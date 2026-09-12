@@ -202,6 +202,44 @@ async def get_live_state(device: str = "", query: str = "", match: str = "", lim
     return _cap(f"{head}\n{body}" if body else f"{head}\n(пусто)")
 
 
+def propose_change(device: str = "", title: str = "", rationale: str = "", commands: str = "", **_: Any) -> str:
+    """Queue a change plan for human approval. This tool never applies anything."""
+    from . import changes
+
+    if not commands.strip():
+        raise ToolError("'commands' is required: RouterOS commands, one per line")
+    if not rationale.strip():
+        raise ToolError("'rationale' is required: explain what the change does and why")
+    dev = _devices([device])[0]
+
+    verdict = changes.validate(commands)
+    findings = [{"line": f.line, "command": f.command, "reason": f.reason}
+                for f in (verdict.blocked or verdict.risky)]
+
+    if not verdict.ok:
+        # Rejected plans are not stored: nothing to approve, and it keeps the queue meaningful.
+        return ("ОТКЛОНЕНО валидатором, план не поставлен в очередь:\n"
+                + "\n".join(f"  строка {f.line}: {f.reason}" for f in verdict.blocked)
+                + "\n\nЭти операции недоступны автоматическому изменению — их выполняет человек "
+                  "на устройстве. Предложи другой способ добиться цели или объясни пользователю, "
+                  "что нужно сделать вручную.")
+
+    plan_id = db.create_plan({
+        "device_id": dev["id"], "created_by": "agent", "title": (title or "Изменение конфигурации")[:120],
+        "rationale": rationale.strip(), "commands": "\n".join(verdict.commands),
+        "risk": verdict.risk, "findings": json.dumps(findings, ensure_ascii=False), "status": "pending",
+    })
+    note = ""
+    if verdict.risky:
+        note = ("\nВНИМАНИЕ, помечено как рискованное:\n"
+                + "\n".join(f"  строка {f.line}: {f.reason}" for f in verdict.risky))
+    return (f"План #{plan_id} поставлен в очередь на подтверждение для {dev['slug']} "
+            f"({len(verdict.commands)} команд, риск: {verdict.risk}).{note}\n\n"
+            f"Ничего ещё не применено. Человек должен открыть раздел «Изменения», проверить план "
+            f"и подтвердить его. Сообщи пользователю, что план ждёт подтверждения, и кратко "
+            f"перечисли, что он делает.")
+
+
 # ---------------------------------------------------------------- registry
 
 Handler = Callable[..., str]
@@ -217,10 +255,14 @@ REGISTRY: dict[str, Handler] = {
     "config_history": config_history,
     "config_diff": config_diff,
     "get_live_state": get_live_state,
+    "propose_change": propose_change,
 }
 
 # Tools that must be awaited - they talk to a router instead of reading the local store.
 ASYNC_TOOLS = {"get_live_state"}
+
+# propose_change only writes a row to the approval queue. Nothing in this registry can change a
+# router: applying is a UI action performed by a person. See apply.py.
 
 SCHEMAS: list[dict[str, Any]] = [
     {
@@ -323,6 +365,31 @@ SCHEMAS: list[dict[str, Any]] = [
                 "limit": {"type": "integer", "description": "Max lines to return (1-200, default 50). Logs return the newest lines."},
             },
             "required": ["device", "query"],
+        },
+    },
+    {
+        "name": "propose_change",
+        "description": (
+            "Propose a configuration change for a device. This places a plan in a queue for a "
+            "human to review and approve - it NEVER applies anything, and you cannot apply it "
+            "yourself. Use it when the user asks for a change rather than a question.\n\n"
+            "Write one RouterOS command per line, exactly as they would be typed on the device. "
+            "A deterministic validator checks the plan before it is queued and rejects anything "
+            "destructive (reboots, resets, user management, scripts, schedulers, firmware, file "
+            "operations, command chaining). Do not try to work around a rejection - report it to "
+            "the user and suggest doing that part by hand.\n\n"
+            "Read the current configuration first so the change fits what is actually there, and "
+            "say plainly in 'rationale' what will change and what could break."
+        ),
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "device": {"type": "string", "description": "Device slug, name, identity or host."},
+                "title": {"type": "string", "description": "Short title for the queue, e.g. 'Открыть SSH для офисной сети'."},
+                "rationale": {"type": "string", "description": "What the change does, why, and the risks. The operator reads this before approving."},
+                "commands": {"type": "string", "description": "RouterOS commands, one per line. No shell, no semicolons, no scripting expressions."},
+            },
+            "required": ["device", "title", "rationale", "commands"],
         },
     },
 ]

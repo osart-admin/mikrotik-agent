@@ -82,6 +82,7 @@ details summary{cursor:pointer;font-size:13px;color:var(--text2);padding:4px 0}
 <a href="/" class="{{ 'on' if page=='devices' }}">Устройства</a>
 <a href="/chat" class="{{ 'on' if page=='chat' }}">Чат</a>
 <a href="/search" class="{{ 'on' if page=='search' }}">Поиск</a>
+<a href="/changes" class="{{ 'on' if page=='changes' }}">Изменения{% if pending_changes %} <span class="tag warn">{{ pending_changes }}</span>{% endif %}</a>
 <a href="/runs" class="{{ 'on' if page=='runs' }}">История сбора</a>
 <a href="/costs" class="{{ 'on' if page=='costs' }}">Расходы</a>
 <a href="/settings" class="{{ 'on' if page=='settings' }}">Настройки</a>

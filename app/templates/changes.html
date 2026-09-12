@@ -1,0 +1,45 @@
+{% extends "base.html" %}{% set page='changes' %}{% block content %}
+<h2 style="margin:0 0 6px;font-size:17px">Изменения конфигурации</h2>
+<p class="muted" style="margin:0 0 14px">План предлагает агент, применяет — человек. Перед применением
+снимается бэкап и вооружается откат: если после изменения устройство перестанет отвечать,
+роутер восстановится сам.</p>
+{% if error %}<div class="alert err">{{ error }}</div>{% endif %}
+{% if ok %}<div class="alert ok">{{ ok }}</div>{% endif %}
+
+{% if awaiting %}
+<div class="alert warn"><b>Ждут подтверждения: {{ awaiting|length }}.</b>
+Изменение применено, но откат вооружён — если не подтвердить до дедлайна, роутер вернётся к бэкапу.</div>
+{% endif %}
+
+{% if not plans %}
+<div class="card"><p class="muted">Планов изменений пока нет. Попросите агента в <a href="/chat">чате</a>
+что-нибудь изменить — он подготовит план и поставит его сюда.</p></div>
+{% else %}
+<div class="card" style="padding:0;overflow:auto">
+<table>
+<tr><th>#</th><th>Устройство</th><th>Что</th><th>Риск</th><th>Команд</th><th>Статус</th><th>Создан</th><th></th></tr>
+{% for p in plans %}
+<tr>
+  <td><a href="/changes/{{ p.id }}"><b>{{ p.id }}</b></a></td>
+  <td>{{ p.device_identity or p.device_name }}</td>
+  <td>{{ p.title }}</td>
+  <td>{% if p.risk=='high' %}<span class="tag warn">высокий</span>
+      {% else %}<span class="tag">обычный</span>{% endif %}</td>
+  <td class="num">{{ p.commands.splitlines()|length }}</td>
+  <td>
+    {% if p.status=='pending' %}<span class="tag">ждёт проверки</span>
+    {% elif p.status=='awaiting_confirm' %}<span class="tag warn">ждёт подтверждения</span>
+    {% elif p.status=='applied' %}<span class="tag ok">применено</span>
+    {% elif p.status=='rejected' %}<span class="tag">отклонено</span>
+    {% elif p.status=='rolled_back' %}<span class="tag err">откачено</span>
+    {% elif p.status=='failed' %}<span class="tag err">ошибка</span>
+    {% else %}<span class="tag">{{ p.status }}</span>{% endif %}
+  </td>
+  <td class="muted">{{ p.created_at[5:16].replace('T',' ') }}</td>
+  <td><a class="btn sec sm" href="/changes/{{ p.id }}">открыть</a></td>
+</tr>
+{% endfor %}
+</table>
+</div>
+{% endif %}
+{% endblock %}

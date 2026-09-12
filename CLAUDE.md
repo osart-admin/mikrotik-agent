@@ -85,6 +85,17 @@ Request/data flow (all in `app/`):
   a `print` covered by `read`, so this needs no extra router rights; active probes (ping,
   traceroute, bandwidth-test) would need the `test` policy and are deliberately out of scope.
   Results are cached for 15s so a chain of tool calls cannot hammer a device.
+- **`changes.py`** - deterministic validator for proposed change plans. Blocks the destructive
+  set outright (resets, reboots, firmware, user management, scripts, schedulers, files, `/import`,
+  scripting expressions, `;` chaining), allows a menu whitelist, flags lockout risks. **Rejects,
+  never sanitises** - a plan is not quietly edited into something permissible.
+- **`apply.py`** - the only path in the app that writes to a router, reachable solely from a UI
+  action by a person. Commit/confirm: backup under a fixed name -> enable the pre-installed
+  rollback scheduler for N minutes -> run the commands -> the operator confirms the device is
+  alive, which disables the scheduler. The scheduler is **pre-installed by admin during write
+  onboarding** because creating one that carries commands needs the `policy` right, which also
+  grants user management; the write account only ever toggles `disabled`/`interval`. That is why
+  the scheduler, `/system backup load` and `/file` are on the validator's forbidden list.
 - **`tools.py`** / **`agent.py`** - the LLM tool layer and loop. `tools.call` is async because
   `get_live_state` opens an SSH session; `ASYNC_TOOLS` lists which handlers must be awaited, and a
   test asserts that set matches which handlers are actually coroutines. Tools are size-capped; the system

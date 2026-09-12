@@ -52,7 +52,8 @@ CREATE TABLE IF NOT EXISTS devices (
     status TEXT NOT NULL DEFAULT 'new',        -- new | ok | unreachable | auth_failed | error
     status_message TEXT NOT NULL DEFAULT '',
     last_seen TEXT, last_collected TEXT, last_changed TEXT,
-    uptime TEXT, cpu_load TEXT, export_lines INTEGER
+    uptime TEXT, cpu_load TEXT, export_lines INTEGER,
+    write_enabled INTEGER NOT NULL DEFAULT 0
 );
 CREATE TABLE IF NOT EXISTS runs (
     id INTEGER PRIMARY KEY,
@@ -125,6 +126,28 @@ CREATE TABLE IF NOT EXISTS usage (
 CREATE INDEX IF NOT EXISTS idx_usage_month ON usage(month);
 CREATE INDEX IF NOT EXISTS idx_usage_day ON usage(day);
 CREATE INDEX IF NOT EXISTS idx_usage_chat ON usage(chat_id, id);
+CREATE TABLE IF NOT EXISTS change_plans (
+    id INTEGER PRIMARY KEY,
+    device_id INTEGER NOT NULL,
+    created_at TEXT NOT NULL,
+    created_by TEXT NOT NULL DEFAULT '',       -- 'agent' or a UI username
+    chat_id INTEGER,
+    title TEXT NOT NULL DEFAULT '',
+    rationale TEXT NOT NULL DEFAULT '',
+    commands TEXT NOT NULL,
+    risk TEXT NOT NULL DEFAULT 'normal',       -- normal | high | blocked
+    findings TEXT NOT NULL DEFAULT '[]',
+    status TEXT NOT NULL DEFAULT 'pending',    -- pending|rejected|applying|awaiting_confirm|applied|rolled_back|failed
+    approved_by TEXT NOT NULL DEFAULT '',
+    approved_at TEXT,
+    applied_at TEXT,
+    confirmed_at TEXT,
+    backup_name TEXT NOT NULL DEFAULT '',
+    rollback_deadline TEXT,
+    output TEXT NOT NULL DEFAULT '',
+    error TEXT NOT NULL DEFAULT ''
+);
+CREATE INDEX IF NOT EXISTS idx_plans_status ON change_plans(status, id);
 CREATE TABLE IF NOT EXISTS audit (
     id INTEGER PRIMARY KEY,
     ts TEXT NOT NULL,
@@ -151,6 +174,11 @@ def connect() -> sqlite3.Connection:
 def init_db() -> None:
     with connect() as conn:
         conn.executescript(SCHEMA)
+        # Added after the first release: CREATE TABLE IF NOT EXISTS will not add a column to an
+        # existing table, so bring older databases up to date explicitly.
+        cols = {r["name"] for r in conn.execute("PRAGMA table_info(devices)")}
+        if "write_enabled" not in cols:
+            conn.execute("ALTER TABLE devices ADD COLUMN write_enabled INTEGER NOT NULL DEFAULT 0")
     if get_setting("session_secret") is None:
         set_setting("session_secret", pysecrets.token_urlsafe(48))
     seed_models()
@@ -528,3 +556,54 @@ def recent_usage(limit: int = 100) -> list[dict[str, Any]]:
             "ORDER BY u.id DESC LIMIT ?", (limit,)
         ).fetchall()
     return [dict(r) for r in rows]
+
+
+# ---------------------------------------------------------------- change plans
+
+def create_plan(fields: dict[str, Any]) -> int:
+    fields = dict(fields)
+    fields.setdefault("created_at", now_iso())
+    cols = ", ".join(fields)
+    marks = ", ".join("?" for _ in fields)
+    with connect() as conn:
+        cur = conn.execute(f"INSERT INTO change_plans({cols}) VALUES({marks})", tuple(fields.values()))
+        return cur.lastrowid
+
+
+def update_plan(plan_id: int, fields: dict[str, Any]) -> None:
+    if not fields:
+        return
+    sets = ", ".join(f"{k}=?" for k in fields)
+    with connect() as conn:
+        conn.execute(f"UPDATE change_plans SET {sets} WHERE id=?", (*fields.values(), plan_id))
+
+
+def get_plan(plan_id: int) -> dict[str, Any] | None:
+    with connect() as conn:
+        row = conn.execute(
+            "SELECT p.*, d.name AS device_name, d.slug AS device_slug, d.host AS device_host, "
+            "d.identity AS device_identity FROM change_plans p JOIN devices d ON d.id=p.device_id "
+            "WHERE p.id=?", (plan_id,)).fetchone()
+    return dict(row) if row else None
+
+
+def list_plans(status: str | None = None, limit: int = 100) -> list[dict[str, Any]]:
+    q = ("SELECT p.*, d.name AS device_name, d.slug AS device_slug, d.identity AS device_identity "
+         "FROM change_plans p JOIN devices d ON d.id=p.device_id")
+    args: list[Any] = []
+    if status:
+        q += " WHERE p.status=?"
+        args.append(status)
+    q += " ORDER BY p.id DESC LIMIT ?"
+    args.append(limit)
+    with connect() as conn:
+        return [dict(r) for r in conn.execute(q, args).fetchall()]
+
+
+def count_pending_plans() -> int:
+    with connect() as conn:
+        return conn.execute("SELECT COUNT(*) FROM change_plans WHERE status='pending'").fetchone()[0]
+
+
+def plans_awaiting_confirm() -> list[dict[str, Any]]:
+    return list_plans("awaiting_confirm", limit=200)

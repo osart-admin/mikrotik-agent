@@ -326,27 +326,45 @@ def test_agent_group_grants_only_what_the_collector_uses():
         assert cmd.startswith("/export") or cmd.endswith("print"), f"{cmd!r} is not a read command"
 
 
-def test_no_tool_can_reach_the_privileged_onboarding_path():
-    """Onboarding opens an admin session with write rights. It must not be a model capability.
+def test_no_tool_can_change_a_router():
+    """The model may *propose* a change; it must never be able to apply one.
 
-    The model's entire surface is tools.REGISTRY; it cannot call HTTP routes. This pins that the
-    registry stays read-only, so adding a write tool has to be a deliberate, visible change.
+    The model's entire surface is tools.REGISTRY - it cannot call HTTP routes. Applying is a UI
+    action performed by a person (see apply.py), so this pins that no tool reaches that path.
     """
+    import inspect
+
     from app import live, tools
 
     assert set(tools.REGISTRY) == {
         "list_devices", "fleet_summary", "list_sections", "get_sections", "search_config",
         "get_device_facts", "get_full_export", "config_history", "config_diff", "get_live_state",
+        "propose_change",
     }
-    # Exactly one tool talks to a router, and only through the constant whitelist.
-    import inspect
+
     for name, fn in tools.REGISTRY.items():
         src = inspect.getsource(fn)
+        # Only the live-state tool opens a session, and only via the constant whitelist.
         if name == "get_live_state":
             assert "live.fetch" in src
         else:
             assert "RouterSSH" not in src and "live.fetch" not in src, f"{name} touches a router"
+        # Nothing may reach the apply engine.
+        for forbidden in ("apply_plan", "confirm_plan", "rollback_now", "from .apply", "apply."):
+            assert forbidden not in src, f"{name} reaches the apply path via {forbidden!r}"
+
     assert all(q.command.startswith("/") and "{" not in q.command for q in live.QUERIES.values())
+
+
+def test_propose_change_only_writes_a_queue_row():
+    """It must validate and enqueue - never execute."""
+    import inspect
+
+    from app import tools
+
+    src = inspect.getsource(tools.propose_change)
+    assert "changes.validate" in src and "db.create_plan" in src
+    assert "RouterSSH" not in src and "r.run(" not in src
 
 
 def test_admin_credentials_never_reach_storage():
