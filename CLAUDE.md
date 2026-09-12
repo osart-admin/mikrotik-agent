@@ -2,6 +2,15 @@
 
 Guidance for Claude Code (claude.ai/code) working in this repository.
 
+## Orientation
+
+- `README.md` - what the service does and how to run it.
+- `docs/DECISIONS.md` - **why** the architecture is what it is, and the phase plan. Read this
+  before changing a load-bearing decision (SSH-only transport, git storage, tools instead of RAG,
+  the `ssh,read` router group, Responses API).
+- `docs/ROUTEROS-NOTES.md` - RouterOS behaviour verified against live hardware.
+- `DEPLOY.md` - putting it on a server.
+
 ## What this is
 
 A self-hosted FastAPI service that SSHes into a fleet of MikroTik routers, stores each device's

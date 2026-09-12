@@ -3,16 +3,17 @@ from __future__ import annotations
 
 from app import facts, rsc, scrub
 
+# Addresses and MACs below are documentation ranges (RFC 5737 / RFC 7042), not real hosts.
 EXPORT = """# 2026-09-10 10:55:57 by RouterOS 7.22.1
 # software id = NMRU-A112
 #
 # model = C53UiG+5HPaxD2HPaxD
 # serial number = HG909TCYXRC
-/interface bridge add admin-mac=D4:01:C3:57:71:A2 auto-mac=no comment=defconf name=bridge
+/interface bridge add admin-mac=00:00:5E:00:53:01 auto-mac=no comment=defconf name=bridge
 /interface vlan add interface=bridge name=vlan20 vlan-id=20
 /interface wireguard add listen-port=13231 mtu=1420 name=wg0 private-key="SECRETKEY="
 /interface wireguard peers add allowed-address=10.9.0.2/32 endpoint-address=203.0.113.7 endpoint-port=13231 interface=wg0 public-key="PUB="
-/interface l2tp-client add connect-to=194.29.62.147 disabled=no name=l2tp-Home password=hunter2 use-ipsec=yes user=bob
+/interface l2tp-client add connect-to=198.51.100.147 disabled=no name=l2tp-Home password=hunter2 use-ipsec=yes user=bob
 /ip address add address=10.0.3.254/24 comment=defconf interface=bridge network=10.0.3.0
 /ip address add address=192.168.2.254/24 interface=ether1 network=192.168.2.0
 /ip dhcp-client add interface=ether1
@@ -67,7 +68,7 @@ def test_facts_extract():
     assert f["wan_interfaces"] == ["ether1"]
     assert f["firewall"] == {"filter": 2, "nat": 1, "mangle": 0, "raw": 0, "address_lists": 0, "ipv6_filter": 0}
     assert f["routing"]["ospf"] is True
-    assert [t["peer"] for t in f["tunnels"]] == ["203.0.113.7", "194.29.62.147"]
+    assert [t["peer"] for t in f["tunnels"]] == ["203.0.113.7", "198.51.100.147"]
     assert [v["vlan_id"] for v in f["interfaces"]["vlan"]] == ["20"]
     assert {s["name"] for s in f["services"]} == {"ssh"}   # www is disabled
 
