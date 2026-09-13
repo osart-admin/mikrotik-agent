@@ -6,7 +6,8 @@ services:
     ports:
       # Bound to loopback: this service holds SSH keys to the whole fleet and must never be
       # reachable directly. Put a reverse proxy (Caddy/nginx) in front of it for TLS + access.
-      - "127.0.0.1:8090:8080"
+      # BIND_ADDRESS (in a local, git-ignored .env) overrides this - see DEPLOY.md for the trade-off.
+      - "${BIND_ADDRESS:-127.0.0.1}:8090:8080"
     environment:
       APP_TIMEZONE: "Europe/Berlin"
       DATA_DIR: "/data"
