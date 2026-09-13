@@ -537,3 +537,19 @@ def test_collector_tries_rsa_first_before_7_12():
     assert creds.key_pems[0] == rsa
     creds = collector.credentials_for({"auth": "key", "username": "agent", "ros_version": "7.24.2"})
     assert creds.key_pems[0] == db.get_secret(collector.KEY_ED25519)
+
+
+def test_llm_key_check_reports_success(logged_in, monkeypatch):
+    """The success path read reply.input_tokens, which moved into reply.usage: a working key 500'd."""
+    from app import agent
+    from app.llm.base import Reply
+    from app.pricing import Usage
+
+    class FakeProvider:
+        async def chat(self, system, messages, tools):
+            return Reply(content="ok", model="fake-model", usage=Usage(uncached_input=7, cached_input=3, output=2))
+
+    monkeypatch.setattr(agent, "provider_from_settings", lambda: FakeProvider())
+    r = logged_in.post("/api/settings/llm/test")
+    assert r.status_code == 200
+    assert r.json() == {"ok": True, "model": "fake-model", "reply": "ok", "tokens": 12}

@@ -504,7 +504,7 @@ async def settings_llm_test(request: Request):
     except llm.LLMError as exc:
         return {"ok": False, "message": str(exc)}
     return {"ok": True, "model": reply.model, "reply": reply.content.strip()[:100],
-            "tokens": reply.input_tokens + reply.output_tokens}
+            "tokens": reply.usage.total}
 
 
 @app.post("/settings/schedule")
