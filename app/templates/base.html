@@ -95,7 +95,15 @@ details summary{cursor:pointer;font-size:13px;color:var(--text2);padding:4px 0}
 <main>{% block content %}{% endblock %}</main>
 <script>
 function toggleTheme(){var d=document.documentElement,n=d.getAttribute('data-theme')==='dark'?'light':'dark';d.setAttribute('data-theme',n);try{localStorage.setItem('theme',n)}catch(e){}}
-function post(url,body){return fetch(url,{method:'POST',headers:{'Content-Type':'application/json'},body:body?JSON.stringify(body):null}).then(r=>r.json())}
+// Never leave a "working…" banner hanging: a 500 page or a dropped request becomes an error object.
+async function jsonOrError(req){
+  try{
+    const r=await req;
+    try{ return await r.json(); }
+    catch(e){ return {ok:false, kind:'error', message:'сервер вернул HTTP '+r.status+' — подробности в логах контейнера'}; }
+  }catch(e){ return {ok:false, kind:'error', message:'запрос не выполнен: '+e}; }
+}
+function post(url,body){return jsonOrError(fetch(url,{method:'POST',headers:{'Content-Type':'application/json'},body:body?JSON.stringify(body):null}))}
 </script>
 {% block script %}{% endblock %}
 </body>

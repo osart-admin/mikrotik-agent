@@ -38,8 +38,9 @@ def credentials_for(dev: sqlite3.Row | dict) -> Credentials:
     if dev["auth"] == "password":
         return Credentials(dev["username"], password=db.device_password(dev))
     keys = [db.get_secret(KEY_ED25519) or "", db.get_secret(KEY_RSA) or ""]
-    if (dev["ros_version"] or "").startswith("6"):
-        keys.reverse()  # RouterOS 6 only understands RSA user keys; try it first
+    from .onboard import key_kind_for
+    if dev["ros_version"] and key_kind_for(dev["ros_version"]) == "rsa":
+        keys.reverse()  # before 7.12 RouterOS only understands RSA user keys; try it first
     return Credentials(dev["username"], key_pems=[k for k in keys if k])
 
 

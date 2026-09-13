@@ -173,6 +173,7 @@ async def device_detail(request: Request, device_id: int):
     raw = store.read_facts(dev["slug"])
     export = store.read_export(dev["slug"])
     return render(request, "device.html", device=dict(dev), facts=json.loads(raw) if raw else None,
+                  saved_password=bool(dev["password_enc"]),
                   export=export, sections=rsc.section_index(export) if export else {},
                   history=store.history(dev["slug"], 15),
                   hostkey=bool(known_host_entry(dev["host"], dev["port"])),
@@ -280,12 +281,20 @@ async def device_use_agent_key(request: Request, device_id: int, agent_user: str
 
 
 @app.post("/api/devices/{device_id}/onboard")
-async def device_onboard(request: Request, device_id: int, admin_user: str = Form(...), admin_password: str = Form(...),
+async def device_onboard(request: Request, device_id: int, admin_user: str = Form(...), admin_password: str = Form(""),
                          agent_user: str = Form("agent"), allowed_address: str = Form("")):
     user = auth.require_user(request)
     dev = db.get_device(device_id)
     if dev is None:
         raise HTTPException(404, "device not found")
+    admin_user = admin_user.strip()
+    if not admin_password:
+        # A password saved with the device (e.g. from the Winbox import) is used server-side and never
+        # sent to the browser. It belongs to the saved login only; onboard() wipes it on success.
+        if dev["password_enc"] and admin_user == dev["username"]:
+            admin_password = db.device_password(dev) or ""
+        if not admin_password:
+            return JSONResponse({"ok": False, "message": "Введите админ-пароль: сохранённого пароля для этого логина нет"})
     try:
         steps = await onboard.onboard(dev, admin_user, admin_password, agent_user.strip() or "agent", allowed_address.strip())
     except SSHError as exc:
@@ -529,6 +538,63 @@ async def settings_delete_user(request: Request, user_id: int):
 
 # ---------------------------------------------------------------- winbox import
 
+# Parsed address books stay on the server, encrypted with the master key. They used to live in the
+# session, but Starlette sessions are signed (not encrypted) cookies: a real address book blew past
+# the browser's 4 KB cookie limit, the cookie was silently dropped and confirm bounced back to
+# /import - and the router passwords travelled to the browser in cleartext.
+IMPORTS_DIR = DATA_DIR / "imports"
+IMPORT_TTL_SECONDS = 3600
+
+
+def _purge_stale_imports() -> None:
+    import time
+    if not IMPORTS_DIR.exists():
+        return
+    cutoff = time.time() - IMPORT_TTL_SECONDS
+    for f in IMPORTS_DIR.glob("*.enc"):
+        try:
+            if f.stat().st_mtime < cutoff:
+                f.unlink()
+        except OSError:
+            pass
+
+
+def _save_import(records: list) -> str:
+    import secrets
+    from . import vault
+    _purge_stale_imports()
+    IMPORTS_DIR.mkdir(parents=True, exist_ok=True)
+    token = secrets.token_hex(16)
+    path = IMPORTS_DIR / f"{token}.enc"
+    path.write_text(vault.encrypt(json.dumps(records)))
+    path.chmod(0o600)
+    return token
+
+
+def _import_path(token: Any) -> Path | None:
+    if not isinstance(token, str) or len(token) != 32 or not all(c in "0123456789abcdef" for c in token):
+        return None
+    return IMPORTS_DIR / f"{token}.enc"
+
+
+def _load_import(token: Any) -> list | None:
+    from . import vault
+    _purge_stale_imports()
+    path = _import_path(token)
+    if path is None or not path.exists():
+        return None
+    try:
+        return json.loads(vault.decrypt(path.read_text()))
+    except (ValueError, OSError):
+        return None
+
+
+def _drop_import(token: Any) -> None:
+    path = _import_path(token)
+    if path is not None:
+        path.unlink(missing_ok=True)
+
+
 @app.get("/import", response_class=HTMLResponse)
 async def import_page(request: Request):
     return render(request, "import.html", parsed=None)
@@ -546,7 +612,9 @@ async def import_upload(request: Request, file: UploadFile = File(...)):
     rows = winbox_import.to_devices(records, mapping)
     field_ids = sorted({k for r in records for k, v in r.items() if isinstance(v, str)})
     samples = {i: [str(r.get(i, ""))[:40] for r in records[:4] if r.get(i)] for i in field_ids}
-    request.session["import_records"] = json.dumps(records)[:900_000]
+    _drop_import(request.session.get("import_token"))
+    request.session.pop("import_records", None)  # legacy oversized cookie payload
+    request.session["import_token"] = _save_import(records)
     return render(request, "import.html", parsed=True, rows=rows, mapping=mapping, fallback=fallback,
                   field_ids=field_ids, samples=samples, count=len(records))
 
@@ -555,10 +623,10 @@ async def import_upload(request: Request, file: UploadFile = File(...)):
 async def import_confirm(request: Request):
     user = auth.require_user(request)
     form = await request.form()
-    raw = request.session.get("import_records")
-    if not raw:
+    token = request.session.get("import_token")
+    records = _load_import(token)
+    if records is None:
         return RedirectResponse("/import", status_code=303)
-    records = json.loads(raw)
     mapping = {k: (int(form[k]) if form.get(k) else None) for k in ("host", "login", "password", "note")}
     rows = winbox_import.to_devices([{int(k): v for k, v in r.items()} for r in records], mapping)
     selected = set(form.getlist("select"))
@@ -573,7 +641,8 @@ async def import_confirm(request: Request):
                           "username": row["login"] or "admin", "auth": "password" if row["password"] else "key",
                           "password": row["password"], "site": site, "notes": "imported from Winbox address book"})
         created += 1
-    request.session.pop("import_records", None)
+    _drop_import(token)
+    request.session.pop("import_token", None)
     db.audit(user["username"], "winbox_import", f"{created} devices")
     return RedirectResponse(f"/settings?imported={created}", status_code=303)
 

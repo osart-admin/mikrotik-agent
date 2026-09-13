@@ -402,3 +402,138 @@ def test_trigger_values_are_shown_in_russian(logged_in):
         html = logged_in.get(path).text
         assert "вручную" in html and "по расписанию" in html
         assert ">manual<" not in html and ">schedule<" not in html
+
+
+def _winbox_cdb(entries: list[tuple[str, str, str, str]]) -> bytes:
+    """Build a minimal Addresses.cdb: length-prefixed M2 messages with short string fields."""
+    import struct
+
+    def field(fid: int, value: str) -> bytes:
+        raw = value.encode()
+        return bytes([fid & 0xFF, (fid >> 8) & 0xFF, (fid >> 16) & 0xFF, 0x21, len(raw)]) + raw
+
+    out = b""
+    for host, login, password, note in entries:
+        msg = b"M2" + field(1, host) + field(2, login) + field(3, password) + field(4, note)
+        out += struct.pack("<I", len(msg)) + msg
+    return out
+
+
+def test_winbox_import_large_address_book_survives_confirm(logged_in):
+    """A real address book is far bigger than the 4 KB cookie limit. Parsed records used to ride in
+    the session cookie, the browser dropped it, and confirm silently bounced back to /import."""
+    entries = [(f"198.51.100.{i}", "admin", f"secret-password-{i:03d}", f"Imported Router {i:03d}")
+               for i in range(1, 61)]
+    r = logged_in.post("/import", files={"file": ("Addresses.cdb", _winbox_cdb(entries))})
+    assert r.status_code == 200
+    assert "198.51.100.60" in r.text
+    cookie = logged_in.cookies.get("mtagent") or ""
+    assert len(cookie) < 1024, f"session cookie is {len(cookie)} bytes"
+    assert "secret-password" not in cookie
+
+    form = {"host": "1", "login": "2", "password": "3", "note": "4", "site": "import-test",
+            "select": [str(i) for i in range(len(entries))]}
+    r = logged_in.post("/import/confirm", data=form, follow_redirects=False)
+    assert r.status_code == 303
+    assert r.headers["location"] == f"/settings?imported={len(entries)}"
+    dev = db.get_device_by_slug("imported-router-060")
+    assert dev is not None and dev["host"] == "198.51.100.60"
+
+    # The server-side copy is single use.
+    r = logged_in.post("/import/confirm", data=form, follow_redirects=False)
+    assert r.headers["location"] == "/import"
+
+
+def test_onboard_uses_saved_password_without_sending_it_to_browser(logged_in, monkeypatch):
+    from app import onboard
+
+    dev_id = db.create_device({"slug": "saved-pw", "name": "Saved PW", "host": "192.0.2.77", "port": 22,
+                               "username": "netadmin", "auth": "password", "password": "winbox-secret-777"})
+    calls = []
+
+    async def fake_onboard(dev, admin_user, admin_password, agent_user, allowed_address=""):
+        calls.append((admin_user, admin_password))
+        return ["ok"]
+
+    monkeypatch.setattr(onboard, "onboard", fake_onboard)
+    try:
+        page = logged_in.get(f"/devices/{dev_id}").text
+        assert "winbox-secret-777" not in page
+        assert "сохранён — оставьте пустым" in page
+
+        r = logged_in.post(f"/api/devices/{dev_id}/onboard", data={"admin_user": "netadmin", "admin_password": ""})
+        assert r.json()["ok"] is True
+        assert calls[-1] == ("netadmin", "winbox-secret-777")
+
+        # The saved password belongs to the saved login only.
+        r = logged_in.post(f"/api/devices/{dev_id}/onboard", data={"admin_user": "admin", "admin_password": ""})
+        assert r.json()["ok"] is False and len(calls) == 1
+
+        # A typed password still wins.
+        r = logged_in.post(f"/api/devices/{dev_id}/onboard", data={"admin_user": "admin", "admin_password": "typed"})
+        assert r.json()["ok"] is True and calls[-1] == ("admin", "typed")
+    finally:
+        db.delete_device(dev_id)
+
+
+def test_onboard_without_saved_password_requires_one(logged_in):
+    dev_id = db.create_device({"slug": "no-saved-pw", "name": "No Saved PW", "host": "192.0.2.78", "port": 22,
+                               "username": "admin", "auth": "key"})
+    try:
+        assert 'name="admin_password" required' in logged_in.get(f"/devices/{dev_id}").text
+        r = logged_in.post(f"/api/devices/{dev_id}/onboard", data={"admin_user": "admin"})
+        assert r.json()["ok"] is False
+    finally:
+        db.delete_device(dev_id)
+
+
+def test_router_dropping_ssh_is_reported_not_500(logged_in, monkeypatch):
+    """A router that accepts TCP and closes before the SSH banner (ip service address list, firewall
+    blacklist) raised an unhandled ConnectionLost: a 500, and the page hung on "Выполняю…"."""
+    import asyncssh
+
+    async def dropped(*args, **kwargs):
+        raise asyncssh.ConnectionLost("Connection lost")
+
+    monkeypatch.setattr(asyncssh, "get_server_host_key", dropped)
+    dev_id = db.create_device({"slug": "drops-ssh", "name": "Drops SSH", "host": "192.0.2.79", "port": 22,
+                               "username": "netadmin", "auth": "password", "password": "x"})
+    try:
+        r = logged_in.post(f"/api/devices/{dev_id}/test")
+        assert r.status_code == 200 and r.json()["ok"] is False
+        assert r.json()["kind"] == "unreachable" and "ip service ssh" in r.json()["message"]
+
+        r = logged_in.post(f"/api/devices/{dev_id}/onboard", data={"admin_user": "netadmin"})
+        assert r.status_code == 200 and r.json()["ok"] is False
+    finally:
+        db.delete_device(dev_id)
+
+
+def test_devices_table_is_sortable(logged_in):
+    dev_id = db.create_device({"slug": "sort-me", "name": "Sort Me", "host": "192.0.2.80", "port": 22,
+                               "username": "agent", "auth": "key"})
+    try:
+        html = logged_in.get("/").text
+        assert 'id="devtable"' in html and html.count('class="sortable"') == 8
+        assert 'data-sort="192.0.2.80"' in html
+    finally:
+        db.delete_device(dev_id)
+
+
+@pytest.mark.parametrize("version,kind", [
+    ("6.49.10", "rsa"), ("7.6", "rsa"), ("7.6 (stable)", "rsa"), ("7.11.2", "rsa"),
+    ("7.12", "ed25519"), ("7.12beta1", "ed25519"), ("7.24.2", "ed25519"), ("8.0", "ed25519"), ("?", "ed25519"),
+])
+def test_user_key_kind_follows_routeros_version(version, kind):
+    """RouterOS before 7.12 silently ignores an ed25519 user-key import (seen on 7.6)."""
+    from app import onboard
+    assert onboard.key_kind_for(version) == kind
+
+
+def test_collector_tries_rsa_first_before_7_12():
+    from app import collector
+    rsa = db.get_secret(collector.KEY_RSA)
+    creds = collector.credentials_for({"auth": "key", "username": "agent", "ros_version": "7.6"})
+    assert creds.key_pems[0] == rsa
+    creds = collector.credentials_for({"auth": "key", "username": "agent", "ros_version": "7.24.2"})
+    assert creds.key_pems[0] == db.get_secret(collector.KEY_ED25519)

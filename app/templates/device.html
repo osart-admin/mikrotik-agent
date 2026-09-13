@@ -21,7 +21,7 @@
 
 {% if device.auth=='password' or device.status in ('auth_failed','new') %}
 <div class="card"><h2>Онбординг: создать read-only пользователя</h2>
-<p class="muted">Разово подключимся под админом, создадим группу <code>mikrotik-agent-ro</code> (политики <code>ssh,read</code> — без <code>write</code>, <code>sensitive</code> и <code>test</code>) и зальём публичный ключ агента. Админ-пароль нигде не сохраняется.</p>
+<p class="muted">Разово подключимся под админом, создадим группу <code>mikrotik-agent-ro</code> (политики <code>ssh,read</code> — без <code>write</code>, <code>sensitive</code> и <code>test</code>) и зальём публичный ключ агента. {% if saved_password %}Пароль, сохранённый при импорте, используется на сервере и в браузер не передаётся; после успешного онбординга он удаляется.{% else %}Админ-пароль нигде не сохраняется.{% endif %}</p>
 <form onsubmit="return onboard(event)" autocomplete="off">
 {# A type=password field makes the browser treat this as a login form and autofill the UI
    credentials, which are not the router's. Same masked-text-input trick as the settings page. #}
@@ -31,7 +31,7 @@
 <div class="field"><label>Админ-логин <span class="muted">— от роутера, не от этого интерфейса</span></label>
 <input name="admin_user" value="{{ device.username if device.username!='agent' else 'admin' }}" required autocomplete="off" data-1p-ignore data-lpignore="true" data-bwignore spellcheck="false"/></div>
 <div class="field"><label>Админ-пароль <span class="muted">— от роутера</span></label>
-<input type="text" class="secret" name="admin_password" required autocomplete="off" data-1p-ignore data-lpignore="true" data-bwignore spellcheck="false" autocapitalize="off" autocorrect="off"/></div>
+<input type="text" class="secret" name="admin_password" {% if saved_password %}placeholder="сохранён — оставьте пустым"{% else %}required{% endif %} autocomplete="off" data-1p-ignore data-lpignore="true" data-bwignore spellcheck="false" autocapitalize="off" autocorrect="off"/></div>
 </div>
 <div class="row">
 <div class="field"><label>Создать пользователя</label><input name="agent_user" value="agent"/></div>
@@ -144,10 +144,10 @@
 <details {{ 'open' if device.status in ('auth_failed','new') }}><summary><b>Ручная установка</b> — если пароль админа вводить не хочется или не подходит</summary>
 <p class="muted">Выполните на роутере (Winbox → New Terminal, или по SSH с машины, где вход уже работает).
 Результат тот же, что у кнопки выше: read-only группа без <code>write</code> и <code>sensitive</code> плюс ключ агента.</p>
-<label>RouterOS 7 — вставить целиком</label>
+<label>RouterOS 7.12 и новее — вставить целиком</label>
 <pre id="manual7">{{ manual_ros7 }}</pre>
 <button class="btn sec sm" type="button" onclick="copyManual('manual7')">Скопировать</button>
-<details style="margin-top:12px"><summary>RouterOS 6 (RSA-ключ, ed25519 не поддерживается)</summary>
+<details style="margin-top:12px"><summary>RouterOS 6 и 7 до 7.12 (RSA-ключ, ed25519 для пользователей не поддерживается)</summary>
 <pre id="manual6">{{ manual_ros6 }}</pre>
 <button class="btn sec sm" type="button" onclick="copyManual('manual6')">Скопировать</button></details>
 <p class="muted" style="margin-top:10px">После этого нажмите кнопку ниже — она проверит вход по ключу и переключит карточку устройства с
@@ -207,7 +207,7 @@ async function onboardWrite(e){
   e.preventDefault();
   const el=document.getElementById('wonb');
   el.innerHTML='<div class="alert warn">Настраиваю путь записи…</div>';
-  const r=await (await fetch('/api/devices/{{ device.id }}/onboard-write',{method:'POST',body:new FormData(e.target)})).json();
+  const r=await jsonOrError(fetch('/api/devices/{{ device.id }}/onboard-write',{method:'POST',body:new FormData(e.target)}));
   el.innerHTML = r.ok
     ? '<div class="alert ok">'+r.steps.map(s=>'✓ '+s).join('<br/>')+'</div>'
     : '<div class="alert err">'+r.message+'</div>';
@@ -244,7 +244,7 @@ async function onboard(e){
   e.preventDefault();
   const fd=new FormData(e.target);
   document.getElementById('onb').innerHTML='<div class="alert warn">Выполняю…</div>';
-  const r=await (await fetch('/api/devices/{{ device.id }}/onboard',{method:'POST',body:fd})).json();
+  const r=await jsonOrError(fetch('/api/devices/{{ device.id }}/onboard',{method:'POST',body:fd}));
   document.getElementById('onb').innerHTML = r.ok
     ? '<div class="alert ok">'+r.steps.map(s=>'✓ '+s).join('<br/>')+'</div>'
     : '<div class="alert err">'+r.message+'</div>';

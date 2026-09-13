@@ -46,6 +46,22 @@ def exact_policy(granted: str) -> str:
     return ",".join(keep + [f"!{p}" for p in ALL_POLICIES if p not in keep])
 
 
+def key_kind_for(version: str) -> str:
+    """Which agent key a router can take as a *user* key.
+
+    RouterOS only accepts ed25519 user keys from 7.12. Earlier 7.x accepts the import command
+    silently and stores nothing (seen on 7.6: `/user ssh-keys print` stays empty), so the key
+    login fails right after a "successful" onboarding. Unknown versions get ed25519.
+    """
+    parts = (version or "").split(" ")[0].split(".")
+    try:
+        major = int(parts[0])
+        minor = int("".join(ch for ch in parts[1] if ch.isdigit()) or 0) if len(parts) > 1 else 0
+    except ValueError:
+        return "ed25519"
+    return "ed25519" if (major, minor) >= (7, 12) else "rsa"
+
+
 def manual_script(agent_user: str, pubkey: str, key_kind: str, allowed_address: str = "") -> str:
     """The same steps onboard() performs, as commands to paste into the router's terminal.
 
@@ -107,7 +123,7 @@ async def onboard(dev: sqlite3.Row, admin_user: str, admin_password: str, agent_
         version = (res.get("version") or "?").split(" ")[0]
         major = int(version.split(".")[0]) if version[:1].isdigit() else 7
         log.append(f"connected as {admin_user}: RouterOS {version}")
-        key_kind = "rsa" if major < 7 else "ed25519"
+        key_kind = key_kind_for(version)
         pub = pubs[key_kind]
         if not pub:
             raise SSHError("error", "no public key generated yet")
@@ -168,7 +184,7 @@ async def onboard_write(dev: sqlite3.Row, admin_user: str, admin_password: str,
         res = parse_print(await r.run("/system resource print"))
         version = (res.get("version") or "?").split(" ")[0]
         major = int(version.split(".")[0]) if version[:1].isdigit() else 7
-        key_kind = "rsa" if major < 7 else "ed25519"
+        key_kind = key_kind_for(version)
         pub = pubs[key_kind]
         if not pub:
             raise SSHError("error", "no public key generated yet")

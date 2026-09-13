@@ -117,6 +117,10 @@ async def _pin_host_key(host: str, port: int) -> None:
         )
     except asyncio.TimeoutError as exc:
         raise SSHError("timeout", f"timeout fetching host key from {host}:{port}") from exc
+    except asyncssh.ConnectionLost as exc:
+        raise _dropped(host, port) from exc
+    except asyncssh.Error as exc:
+        raise SSHError("error", f"{host}:{port}: {exc}") from exc
     except OSError as exc:
         raise SSHError("unreachable", f"{host}:{port}: {exc}") from exc
     if key is None:
@@ -124,6 +128,15 @@ async def _pin_host_key(host: str, port: int) -> None:
     KNOWN_HOSTS_PATH.parent.mkdir(parents=True, exist_ok=True)
     with KNOWN_HOSTS_PATH.open("a") as fh:
         fh.write(f"{_known_hosts_pattern(host, port)} {key.export_public_key('openssh').decode().strip()}\n")
+
+
+_DROPPED_HINT = ("роутер принял TCP-соединение и сразу закрыл его, не начав SSH. Обычно это значит, что "
+                 "адрес этого сервиса не входит в /ip service ssh address=..., попал в address-list "
+                 "блокировки файрвола (защита от перебора) или на роутере исчерпан лимит SSH-сессий.")
+
+
+def _dropped(host: str, port: int) -> "SSHError":
+    return SSHError("unreachable", f"{host}:{port}: {_DROPPED_HINT}")
 
 
 class RouterSSH:
@@ -176,6 +189,8 @@ class RouterSSH:
             raise SSHError("auth_failed", f"вход {how} для «{self.creds.username}» отклонён: {hint}") from exc
         except asyncssh.HostKeyNotVerifiable as exc:
             raise SSHError("hostkey", f"host key mismatch for {self.host}:{self.port} ({exc}); forget the host key if the router was reinstalled") from exc
+        except asyncssh.ConnectionLost as exc:
+            raise _dropped(self.host, self.port) from exc
         except (asyncssh.KeyExchangeFailed, asyncssh.ProtocolError) as exc:
             raise SSHError("error", f"SSH negotiation failed with {self.host}: {exc}") from exc
         except asyncssh.Error as exc:

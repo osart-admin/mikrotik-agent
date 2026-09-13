@@ -73,8 +73,9 @@ def write_credentials(dev: dict[str, Any]) -> Credentials:
     """Credentials for the write-capable account, which is deliberately not the collector's."""
     user = (db.get_setting("write_user", "") or "agent-rw").strip()
     keys = [db.get_secret(collector.KEY_ED25519) or "", db.get_secret(collector.KEY_RSA) or ""]
-    if (dev.get("ros_version") or "").startswith("6"):
-        keys.reverse()
+    from .onboard import key_kind_for
+    if dev.get("ros_version") and key_kind_for(dev["ros_version"]) == "rsa":
+        keys.reverse()  # before 7.12 RouterOS only understands RSA user keys
     return Credentials(user, key_pems=[k for k in keys if k])
 
 
