@@ -178,12 +178,25 @@ async function showDiff(sha){
     if(l.startsWith('+')&&!l.startsWith('+++'))return '<span class="a">'+e+'</span>';
     if(l.startsWith('-')&&!l.startsWith('---'))return '<span class="d">'+e+'</span>';return e;}).join('\n');
 }
+function esc(s){return String(s??'').replace(/[&<>"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));}
+function diagHtml(d){
+  const p=d.ping, t=d.tcp, lines=[];
+  if(p.ok===null) lines.push('Ping: не проверен — '+esc(p.error));
+  else if(p.ok) lines.push('Ping: ✓ ответов '+p.received+' из '+p.sent+(p.avg_ms!=null?', в среднем '+p.avg_ms+' мс':''));
+  else lines.push('Ping: ✗ '+(p.sent?'ответов 0 из '+p.sent:esc(p.error)));
+  const st={open:'✓ открыт'+(t.connect_ms!=null?' ('+t.connect_ms+' мс)':''), refused:'✗ закрыт (соединение отклонено)',
+            timeout:'✗ нет ответа', unreachable:'✗ нет маршрута'+(t.error?' — '+esc(t.error):'')}[t.state]||esc(t.state);
+  lines.push('TCP-порт '+d.port+': '+st);
+  if(t.state==='open') lines.push('SSH: '+({ok:'✓ отвечает — '+esc(t.banner_text), closed:'✗ соединение закрыто до SSH',
+                                         silent:'✗ не отвечает'+(t.banner_text?' — прислал «'+esc(t.banner_text)+'»':'')}[t.banner]||esc(t.banner)));
+  return '<div style="margin-top:8px">'+lines.join('<br/>')+'</div><div style="margin-top:8px"><b>'+esc(d.verdict)+'</b></div>';
+}
 async function test(){
   document.getElementById('msg').innerHTML='<div class="alert warn">Проверяю…</div>';
   const r=await post('/api/devices/{{ device.id }}/test');
   document.getElementById('msg').innerHTML=r.ok
-    ? '<div class="alert ok">OK — '+r.identity+', RouterOS '+r.version+' ('+r.board+')</div>'
-    : '<div class="alert err">'+r.kind+': '+r.message+'</div>';
+    ? '<div class="alert ok">OK — '+esc(r.identity)+', RouterOS '+esc(r.version)+' ('+esc(r.board)+')</div>'
+    : '<div class="alert err">'+esc(r.kind)+': '+esc(r.message)+(r.diag?diagHtml(r.diag):'')+'</div>';
 }
 async function collect(){
   document.getElementById('msg').innerHTML='<div class="alert warn">Собираю…</div>';

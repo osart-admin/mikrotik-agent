@@ -16,7 +16,7 @@ from starlette.middleware.sessions import SessionMiddleware
 
 from urllib.parse import quote
 
-from . import (agent, apply, auth, collector, changes as changes_mod, db, live, llm, onboard,
+from . import (agent, apply, auth, collector, changes as changes_mod, db, live, llm, netcheck, onboard,
                pricing, rsc, scheduler, scrub, store, tools, winbox_import)
 from .config import APP_TIMEZONE, DATA_DIR
 from .ssh import SSHError, forget_host, known_host_entry
@@ -236,7 +236,11 @@ async def device_test(request: Request, device_id: int):
         info = await collector.probe(dev)
     except SSHError as exc:
         db.update_device(device_id, {"status": exc.kind, "status_message": exc.message})
-        return JSONResponse({"ok": False, "kind": exc.kind, "message": exc.message}, status_code=200)
+        body = {"ok": False, "kind": exc.kind, "message": exc.message}
+        if exc.kind in ("unreachable", "timeout", "error"):
+            # Tell a dead host from a closed port, a firewall drop or a refused source address.
+            body["diag"] = await netcheck.diagnose(dev["host"], dev["port"])
+        return JSONResponse(body, status_code=200)
     db.update_device(device_id, {"status": "ok", "status_message": "", "identity": info["identity"],
                                  "ros_version": info["version"], "board": info["board"], "arch": info["arch"],
                                  "last_seen": db.now_iso()})
