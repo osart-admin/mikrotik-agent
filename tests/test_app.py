@@ -581,3 +581,14 @@ def test_runs_page_names_the_router_and_separates_first_snapshot(logged_in):
     finally:
         db.delete_device(dev_id)
 
+
+def test_system_prompt_does_not_contradict_the_change_tool():
+    """The phase-1 rule "you cannot change anything, applying is not yet supported" outlived the
+    propose_change tool: asked for commands, the agent wrote them into the chat and queued no plan."""
+    from app import agent, tools
+
+    assert "propose_change" in {t["name"] for t in tools.SCHEMAS}
+    prompt = agent.SYSTEM_PROMPT
+    assert "propose_change" in prompt
+    assert "not yet supported" not in prompt
+    assert "You cannot change anything" not in prompt
