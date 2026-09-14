@@ -1,25 +1,43 @@
 {% extends "base.html" %}{% set page='runs' %}{% block content %}
+<style>
+.runhead{flex-wrap:wrap;gap:4px 12px}
+.runtable{table-layout:fixed;margin-top:10px}
+.runtable td{vertical-align:top}
+.runtable .c-dev{width:34%}.runtable .c-st{width:26%}.runtable .c-ms{width:10%}
+</style>
 <div class="flex between" style="margin-bottom:6px">
 <h2 style="margin:0;font-size:17px">История сбора</h2>
 <span class="muted">{% if next_run %}следующий: {{ next_run[:16].replace('T',' ') }}{% else %}автосбор выключен — <a href="/settings">задать интервал</a>{% endif %}</span>
 </div>
-<p class="muted" style="margin:0 0 14px">Сбор — один проход по всем включённым устройствам: зайти по SSH, снять <code>/export</code>,
-сравнить с сохранённым и закоммитить, если конфигурация изменилась.</p>
+<p class="muted" style="margin:0 0 14px">Сбор — один запуск: зайти на роутер по SSH, снять <code>/export</code>, сравнить с сохранённым
+и закоммитить, если конфигурация изменилась. Запуск охватывает либо все включённые устройства («Собрать всё» или по расписанию),
+либо одно устройство (кнопка ↻ в списке или «Собрать» на карточке).</p>
 {% for r in runs %}
+{% set rows = detail.get(r.id) or [] %}
+{% set total = r.ok_count + r.fail_count %}
+{% set first_count = rows|selectattr('changed')|selectattr('first_snapshot')|list|length %}
+{% set real_changed = (r.changed_count - first_count) if rows else r.changed_count %}
 <div class="card">
-<div class="flex between"><b>Сбор #{{ r.id }}</b>
+<div class="flex between runhead">
+<div><b>Сбор #{{ r.id }}</b>
+<span class="muted"> · {% if total == 1 and rows|length == 1 %}{{ rows[0].identity or rows[0].name }} <code>{{ rows[0].host }}</code>{% else %}устройств: {{ total }}{% endif %}</span></div>
 <span class="muted">{{ r.started_at[:16].replace('T',' ') }} · {{ 'вручную' if r.trigger=='manual' else 'по расписанию' }}
-· собрано {{ r.ok_count }}{% if r.fail_count %} · <span class="tag err">не удалось {{ r.fail_count }}</span>{% endif %}
-{% if r.changed_count %} · <span class="tag warn">конфиг изменился у {{ r.changed_count }}</span>{% else %} · изменений нет{% endif %}
+{% if total != 1 %} · собрано {{ r.ok_count }}{% endif %}{% if r.fail_count %} · <span class="tag err">не удалось {{ r.fail_count }}</span>{% endif %}
+{% if real_changed > 0 %} · <span class="tag warn">конфиг изменился{% if total != 1 %} у {{ real_changed }}{% endif %}</span>{% endif %}
+{% if first_count %} · <span class="tag">первый снимок{% if total != 1 %} у {{ first_count }}{% endif %}</span>{% endif %}
+{% if r.ok_count and not r.changed_count %} · изменений нет{% endif %}
 {% if r.commit_sha %} · коммит <code>{{ r.commit_sha[:8] }}</code>{% endif %}</span></div>
-{% if detail.get(r.id) %}
-<table style="margin-top:10px">
-{% for d in detail[r.id] %}
-<tr><td><a href="/devices/{{ d.device_id }}">{{ d.name }}</a></td>
-<td>{% if d.status=='ok' %}<span class="tag ok">ok</span>{% else %}<span class="tag err">{{ d.status }}</span>{% endif %}
-{% if d.changed %} <span class="tag warn">конфиг изменился</span>{% endif %}</td>
-<td class="muted">{{ d.duration_ms }} мс</td>
-<td class="muted">{{ d.message[:120] }}</td></tr>
+{% if rows %}
+<table class="runtable">
+{% for d in rows %}
+<tr><td class="c-dev"><a href="/devices/{{ d.device_id }}"><b>{{ d.identity or d.name }}</b></a>
+    <div class="muted"><code>{{ d.host }}{% if d.port != 22 %}:{{ d.port }}{% endif %}</code>{% if d.identity and d.name != d.identity %} · карточка: {{ d.name }}{% endif %}</div></td>
+<td class="c-st">{% if d.status=='ok' %}<span class="tag ok">ok</span>{% else %}<span class="tag err">{{ d.status }}</span>{% endif %}
+{% if d.changed and d.first_snapshot %} <span class="tag" title="Раньше конфигурация этого устройства не сохранялась — сравнивать не с чем">первый снимок</span>
+{% elif d.changed %} <span class="tag warn">конфиг изменился</span>{% if r.commit_sha %} <a href="/devices/{{ d.device_id }}/diff?commit={{ r.commit_sha }}" target="_blank" rel="noopener">что изменилось →</a>{% endif %}
+{% elif d.status=='ok' %} <span class="muted">без изменений</span>{% endif %}</td>
+<td class="c-ms muted">{{ d.duration_ms }} мс</td>
+<td class="muted">{{ d.message[:120] if d.message else '' }}</td></tr>
 {% endfor %}
 </table>
 {% endif %}

@@ -389,8 +389,13 @@ def list_runs(limit: int = 30) -> list[sqlite3.Row]:
 def run_details(run_id: int) -> list[sqlite3.Row]:
     with connect() as conn:
         return conn.execute(
-            "SELECT rd.*, d.name, d.slug FROM run_devices rd JOIN devices d ON d.id=rd.device_id "
-            "WHERE rd.run_id=? ORDER BY d.site, d.name",
+            # first_snapshot: nothing was stored for this device before, so "changed" only means
+            # the initial export was saved - not that the router's configuration changed.
+            "SELECT rd.*, d.name, d.slug, d.identity, d.host, d.port, "
+            "NOT EXISTS (SELECT 1 FROM run_devices p WHERE p.device_id=rd.device_id AND p.run_id<rd.run_id "
+            "AND p.status='ok') AS first_snapshot "
+            "FROM run_devices rd JOIN devices d ON d.id=rd.device_id "
+            "WHERE rd.run_id=? ORDER BY d.site, COALESCE(d.identity, d.name)",
             (run_id,),
         ).fetchall()
 

@@ -392,7 +392,7 @@ def test_runs_page_is_labelled_as_a_history(logged_in):
     html = logged_in.get("/runs").text
     assert "История сбора" in html
     assert ">Сборы<" not in html          # the old ambiguous nav label
-    assert "один проход по всем включённым устройствам" in html
+    assert "все включённые устройства" in html and "одно устройство" in html
 
 
 def test_trigger_values_are_shown_in_russian(logged_in):
@@ -553,3 +553,31 @@ def test_llm_key_check_reports_success(logged_in, monkeypatch):
     r = logged_in.post("/api/settings/llm/test")
     assert r.status_code == 200
     assert r.json() == {"ok": True, "model": "fake-model", "reply": "ok", "tokens": 12}
+
+
+def test_runs_page_names_the_router_and_separates_first_snapshot(logged_in):
+    """Imported cards are all called "MikroTik": the history must show identity and address, and the
+    first stored export must not read as a configuration change."""
+    dev_id = db.create_device({"slug": "runs-label", "name": "MikroTik", "host": "192.0.2.81", "port": 22,
+                               "username": "agent", "auth": "key"})
+    db.update_device(dev_id, {"identity": "Branch-07"})
+    try:
+        first = db.start_run("manual")
+        db.record_run_device(first, dev_id, "ok", "", True, 900)
+        db.finish_run(first, 1, 0, 1, "a" * 40)
+        second = db.start_run("manual")
+        db.record_run_device(second, dev_id, "ok", "", True, 800)
+        db.finish_run(second, 1, 0, 1, "b" * 40)
+
+        details = {r: {d["device_id"]: d for d in db.run_details(r)} for r in (first, second)}
+        assert details[first][dev_id]["first_snapshot"] == 1
+        assert details[second][dev_id]["first_snapshot"] == 0
+
+        html = logged_in.get("/runs").text
+        assert "Branch-07" in html and "192.0.2.81" in html
+        assert "первый снимок" in html
+        assert f"/devices/{dev_id}/diff?commit={'b' * 40}" in html
+        assert f"/devices/{dev_id}/diff?commit={'a' * 40}" not in html
+    finally:
+        db.delete_device(dev_id)
+
