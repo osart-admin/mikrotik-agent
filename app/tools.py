@@ -61,6 +61,45 @@ def list_devices(**_: Any) -> str:
     return _cap("\n".join(out))
 
 
+# A rule reading "dst-address-list=Srv-list" decides nothing without the list's members, and
+# get_sections returns only the paths asked for - so whoever asks for the rules gets the lists
+# those rules name, or they conclude the rule is unrelated and propose a change that cannot work.
+_LIST_REFS: dict[str, tuple[str, ...]] = {
+    "/ip/firewall/address-list": ("address-list", "src-address-list", "dst-address-list"),
+    "/interface/list/member": ("interface-list", "in-interface-list", "out-interface-list"),
+}
+LIST_EXPANSION_MAX_LINES = 40
+
+
+def referenced_lists(text: str, lines: list[str], asked: list[str]) -> list[str]:
+    """Member blocks for the named lists `lines` reference but `asked` does not already cover."""
+    want = [rsc.normalize_path(p) for p in asked]
+    refs = rsc.parse("\n".join(lines))
+    entries = rsc.parse(text)
+    blocks: list[str] = []
+    for path, attrs in _LIST_REFS.items():
+        if any(path == w or path.startswith(w + "/") for w in want):
+            continue
+        # "!Admin-list" negates the match but references the same list.
+        names = {v.lstrip("!") for e in refs for a in attrs if (v := e.args.get(a, "").lstrip("!"))}
+        if not names:
+            continue
+        out: list[str] = []
+        for name in sorted(names):
+            members = [e.raw for e in entries if e.path == path and e.args.get("list", "") == name]
+            if not members:
+                continue
+            # Capped per list, not per block: a long list must not crowd out a short one.
+            if len(members) > LIST_EXPANSION_MAX_LINES:
+                out.append(f"# {name}: showing {LIST_EXPANSION_MAX_LINES} of {len(members)} entries")
+                members = members[:LIST_EXPANSION_MAX_LINES]
+            out.extend(members)
+        if out:
+            blocks.append(f"# {path} - members of the lists referenced above "
+                          f"(request {path} directly for the full lists)\n" + "\n".join(out))
+    return blocks
+
+
 def get_sections(device: str = "", paths: list[str] | None = None, **_: Any) -> str:
     if not paths:
         raise ToolError("'paths' is required, e.g. [\"/ip/firewall/filter\", \"/ip/address\"]")
@@ -72,7 +111,10 @@ def get_sections(device: str = "", paths: list[str] | None = None, **_: Any) -> 
         near = [p for p in idx if any(rsc.normalize_path(w).strip("/").split("/")[0] in p for w in paths)]
         hint = f" Closest sections present: {', '.join(near[:15])}" if near else f" Sections present: {', '.join(list(idx)[:40])}"
         return f"No configuration under {paths} on {dev['slug']}.{hint}"
-    return _cap(f"# {dev['slug']} - {', '.join(paths)}\n" + _clean("\n".join(lines)))
+    body = "\n".join(lines)
+    for block in referenced_lists(text, lines, paths):
+        body += "\n\n" + block
+    return _cap(f"# {dev['slug']} - {', '.join(paths)}\n" + _clean(body))
 
 
 def search_config(pattern: str = "", devices: list[str] | None = None, context: int = 0, **_: Any) -> str:
@@ -287,7 +329,7 @@ SCHEMAS: list[dict[str, Any]] = [
     },
     {
         "name": "get_sections",
-        "description": "Return the exact RouterOS export lines for one or more configuration sections of a device. This is the main tool for answering 'how is X configured'. Paths may be written '/ip firewall filter' or '/ip/firewall/filter'; a prefix returns all sub-sections.",
+        "description": "Return the exact RouterOS export lines for one or more configuration sections of a device. This is the main tool for answering 'how is X configured'. Paths may be written '/ip firewall filter' or '/ip/firewall/filter'; a prefix returns all sub-sections. When the returned lines reference a named address-list or interface-list, that list's members are appended automatically, so you can tell whether a rule actually matches the addresses you care about.",
         "parameters": {
             "type": "object",
             "properties": {
