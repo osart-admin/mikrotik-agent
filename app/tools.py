@@ -378,7 +378,7 @@ SCHEMAS: list[dict[str, Any]] = [
             "the user asks for a change rather than a question.\n\n"
             "Write one RouterOS command per line, exactly as they would be typed on the device. "
             "A deterministic validator checks the plan before it is queued and rejects anything "
-            "destructive (reboots, resets, user management, scripts, schedulers, firmware, file "
+            "destructive (reboots, configuration resets, user management, scripts, schedulers, firmware, file "
             "operations, command chaining). Do not try to work around a rejection - report it to "
             "the user and suggest doing that part by hand.\n\n"
             "Read the current configuration first so the change fits what is actually there, and "

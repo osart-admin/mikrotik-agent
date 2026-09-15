@@ -47,6 +47,8 @@ RISKY: list[tuple[str, str]] = [
     (r"/ip\s+firewall\s+filter\s+add.*action=drop(?!.*\bsrc-address=)", "drop без ограничения источника"),
     (r"/ip\s+firewall\s+filter\s+add.*chain=input", "правило в цепочке input — влияет на доступ к роутеру"),
     (r"/interface\s+\w+\s+(remove|disable)", "отключение или удаление интерфейса"),
+    (r"/interface\s+ethernet\s+(reset-mac-address\b|set\b.*\bmac-address=)",
+     "смена MAC — если через этот порт идёт управление, связь пропадёт, пока не обновятся ARP-кэши"),
     (r"/ip\s+route\s+(remove|set)", "правка маршрутов"),
     (r"\bremove\b", "удаление записи"),
     (r"/ip\s+dhcp-server", "изменение DHCP-сервера"),
@@ -63,6 +65,12 @@ ALLOWED_MENUS = (
 )
 
 MAX_COMMANDS = 40
+
+# Verbs beyond add/set/remove/enable/disable, recognised only in the menu they belong to. An
+# unknown verb anywhere else still fails to parse and is rejected.
+MENU_VERBS: dict[str, tuple[str, ...]] = {
+    "/interface/ethernet": ("reset-mac-address",),
+}
 
 
 @dataclass
@@ -93,11 +101,19 @@ class Validation:
         return "явных рисков не выявлено"
 
 
+def _menu_path(raw: str) -> str:
+    return "/" + "/".join(p for p in re.split(r"[ /]+", raw) if p)
+
+
 def normalize_menu(command: str) -> str:
     m = re.match(r"^(/[a-z0-9][a-z0-9 /-]*?)\s+(add|set|remove|enable|disable|print|export)\b", command)
-    if not m:
-        return ""
-    return "/" + "/".join(p for p in re.split(r"[ /]+", m.group(1)) if p)
+    if m:
+        return _menu_path(m.group(1))
+    for menu, verbs in MENU_VERBS.items():
+        m = re.match(r"^(/[a-z0-9][a-z0-9 /-]*?)\s+(?:" + "|".join(map(re.escape, verbs)) + r")(?:\s|$)", command)
+        if m and _menu_path(m.group(1)) == menu:
+            return menu
+    return ""
 
 
 def parse_commands(text: str) -> list[str]:

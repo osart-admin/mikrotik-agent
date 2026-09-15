@@ -77,6 +77,25 @@ def test_an_unparseable_command_is_rejected_rather_than_guessed_at():
     assert not r.ok and "не удалось разобрать" in r.blocked[0].reason
 
 
+@pytest.mark.parametrize("cmd", [
+    "/interface ethernet reset-mac-address ether3",
+    "/interface ethernet reset-mac-address [ find default-name=ether4 ]",
+])
+def test_mac_reset_is_accepted_but_flagged(cmd):
+    r = v(cmd)
+    assert r.ok and r.risk == "high"
+    assert any("смена MAC" in f.reason for f in r.risky)
+
+
+@pytest.mark.parametrize("cmd", [
+    "/ip address reset-mac-address ether3",      # menu-scoped verb outside its menu
+    "/interface ethernet reset-mac-addressx ether3",
+    "/system reset-configuration",
+])
+def test_menu_scoped_verbs_do_not_leak_elsewhere(cmd):
+    assert not v(cmd).ok
+
+
 def test_reads_do_not_belong_in_a_change_plan():
     assert not v("/ip firewall filter print").ok
 
