@@ -19,7 +19,7 @@ from urllib.parse import quote
 
 from . import (agent, apply, audit as audit_mod, auth, collector, changes as changes_mod, db, live,
                llm, netcheck, onboard, pricing, rsc, scheduler, scrub, store, tools, winbox_import)
-from .config import APP_TIMEZONE, DATA_DIR
+from .config import APP_BUILT, APP_TIMEZONE, APP_VERSION, DATA_DIR
 from .ssh import SSHError, forget_host, known_host_entry
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s: %(message)s")
@@ -40,6 +40,7 @@ def localtime(value: str | None, style: str = "full") -> Markup:
 
 
 templates.env.filters["localtime"] = localtime
+templates.env.globals.update(app_version=APP_VERSION, app_built=APP_BUILT)
 
 
 @asynccontextmanager
@@ -49,7 +50,7 @@ async def lifespan(app: FastAPI):
     store.ensure_repo()
     collector.ensure_keys()
     scheduler.start()
-    log.info("mikrotik-agent ready (tz=%s, data=%s)", APP_TIMEZONE, DATA_DIR)
+    log.info("mikrotik-agent %s ready (built=%s, tz=%s, data=%s)", APP_VERSION, APP_BUILT or "?", APP_TIMEZONE, DATA_DIR)
     yield
     scheduler.stop()
 
@@ -98,7 +99,7 @@ def render(request: Request, name: str, **ctx: Any) -> HTMLResponse:
 
 @app.get("/health")
 async def health() -> dict[str, str]:
-    return {"status": "ok"}
+    return {"status": "ok", "version": APP_VERSION, "built": APP_BUILT}
 
 
 @app.get("/setup", response_class=HTMLResponse)

@@ -88,6 +88,7 @@ details summary{cursor:pointer;font-size:13px;color:var(--text2);padding:4px 0}
 <a href="/costs" class="{{ 'on' if page=='costs' }}">Расходы</a>
 <a href="/settings" class="{{ 'on' if page=='settings' }}">Настройки</a>
 </nav>
+<span class="muted" title="Версия сборки{% if app_built %}, собрана {{ app_built }}{% endif %}">{{ app_version }}{% if app_built %} · {{ app_built|localtime }}{% endif %}</span>
 <button class="btn sec sm" onclick="toggleTheme()">◐</button>
 <span class="muted">{{ user.username }}</span>
 <a href="/logout" class="muted">выйти</a>

@@ -25,10 +25,14 @@ The app is **baked into the image** (only `./data` is bind-mounted), so any code
 rebuild:
 
 ```bash
-docker compose up -d --build    # UI at http://localhost:8090 (container port 8080)
+./deploy.sh                     # UI at http://localhost:8090 (container port 8080)
 docker logs mikrotik-agent      # primary diagnostic
 docker compose down
 ```
+
+`deploy.sh` is `docker compose up -d --build` plus the `APP_VERSION` (`git describe --always
+--dirty`) and `APP_BUILT` build args, shown in the header and `/health` so it is clear which build
+a server runs. `.git` is in `.dockerignore`, so a bare `docker compose up --build` reports `unknown`.
 
 Tests run **inside the image** - the local interpreter is Python 3.9 and the code needs 3.10+
 union syntax plus asyncssh:

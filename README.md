@@ -38,7 +38,7 @@ Wi-Fi и у кого слабый сигнал».
 ## Быстрый старт
 
 ```bash
-docker compose up -d --build
+./deploy.sh
 ```
 
 Интерфейс на http://127.0.0.1:8090 — при первом запуске попросит создать администратора.
@@ -52,7 +52,7 @@ docker compose up -d --build
 Приложение запечено в образ, поэтому изменения кода требуют пересборки:
 
 ```bash
-docker compose up -d --build
+./deploy.sh                  # docker compose up -d --build с версией из git в шапке и /health
 docker logs mikrotik-agent
 ```
 

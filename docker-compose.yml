@@ -1,6 +1,11 @@
 services:
   mikrotik-agent:
-    build: .
+    build:
+      context: .
+      # Set by ./deploy.sh from `git describe --always --dirty`; shown in the header and /health.
+      args:
+        APP_VERSION: ${APP_VERSION:-unknown}
+        APP_BUILT: ${APP_BUILT:-}
     container_name: mikrotik-agent
     restart: unless-stopped
     ports:

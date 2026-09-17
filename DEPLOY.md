@@ -51,9 +51,15 @@ done
 
 ```bash
 git clone <repo> ~/mikrotik-agent && cd ~/mikrotik-agent
-docker compose up -d --build
+./deploy.sh
 docker compose logs -f
 ```
+
+`./deploy.sh` — это `docker compose up -d --build`, который вшивает в образ версию из
+`git describe --always --dirty` и время сборки. Версия видна в шапке интерфейса и в `/health`
+(`curl -s http://127.0.0.1:8090/health`), так что на любом сервере понятно, что стоит.
+Суффикс `-dirty` значит, что собрано с незакоммиченными правками. Обновление: `git pull && ./deploy.sh`.
+Сборка голым `docker compose up -d --build` тоже работает, но версия будет `unknown`.
 
 `data/` с машины разработки **не копируйте** — ключи и пароли заведутся заново через UI. Если всё же
 переносите, то целиком вместе с `data/master.key`, иначе `.enc`-значения не расшифруются.

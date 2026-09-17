@@ -29,7 +29,8 @@ def logged_in(client):
 
 
 def test_health_is_public(client):
-    assert client.get("/health").json() == {"status": "ok"}
+    body = client.get("/health").json()
+    assert body["status"] == "ok" and body["version"]
 
 
 def test_protected_page_redirects_not_500(client):
@@ -545,6 +546,18 @@ def test_timestamps_are_handed_to_the_browser_as_utc_instants(logged_in):
     assert localtime("2026-09-16T12:18:05+00:00", "short") == \
         '<time datetime="2026-09-16T12:18:05+00:00" data-f="short">09-16 12:18</time>'
     assert localtime(None) == ""
+
+
+def test_build_version_is_shown_in_the_header(logged_in):
+    from app.main import templates
+
+    templates.env.globals.update(app_version="f3cd58b-dirty", app_built="2026-09-17T12:50:00Z")
+    try:
+        html = logged_in.get("/").text
+    finally:
+        templates.env.globals.update(app_version="unknown", app_built="")
+    header = html.split("<header")[1].split("</header>")[0]
+    assert "f3cd58b-dirty" in header and '<time datetime="2026-09-17T12:50:00Z"' in header
 
 
 def test_trigger_values_are_shown_in_russian(logged_in):

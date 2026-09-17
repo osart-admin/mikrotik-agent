@@ -10,6 +10,8 @@ DB_PATH = DATA_DIR / "app.db"
 MASTER_KEY_PATH = DATA_DIR / "master.key"
 KNOWN_HOSTS_PATH = DATA_DIR / "known_hosts"
 APP_TIMEZONE = os.getenv("APP_TIMEZONE", "Europe/Berlin")
+APP_VERSION = os.getenv("APP_VERSION") or "unknown"
+APP_BUILT = os.getenv("APP_BUILT", "")
 
 # Collector limits
 SSH_CONNECT_TIMEOUT = int(os.getenv("SSH_CONNECT_TIMEOUT", "15"))
