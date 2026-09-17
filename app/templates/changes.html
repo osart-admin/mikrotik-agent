@@ -35,7 +35,7 @@
     {% elif p.status=='failed' %}<span class="tag err">ошибка</span>
     {% else %}<span class="tag">{{ p.status }}</span>{% endif %}
   </td>
-  <td class="muted">{{ p.created_at[5:16].replace('T',' ') }}</td>
+  <td class="muted">{{ p.created_at|localtime('short') }}</td>
   <td><a class="btn sec sm" href="/changes/{{ p.id }}">открыть</a></td>
 </tr>
 {% endfor %}

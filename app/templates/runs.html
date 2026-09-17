@@ -7,7 +7,7 @@
 </style>
 <div class="flex between" style="margin-bottom:6px">
 <h2 style="margin:0;font-size:17px">История сбора</h2>
-<span class="muted">{% if next_run %}следующий: {{ next_run[:16].replace('T',' ') }}{% else %}автосбор выключен — <a href="/settings">задать интервал</a>{% endif %}</span>
+<span class="muted">{% if next_run %}следующий: {{ next_run|localtime }}{% else %}автосбор выключен — <a href="/settings">задать интервал</a>{% endif %}</span>
 </div>
 <p class="muted" style="margin:0 0 14px">Сбор — один запуск: зайти на роутер по SSH, снять <code>/export</code>, сравнить с сохранённым
 и закоммитить, если конфигурация изменилась. Запуск охватывает либо все включённые устройства («Собрать всё» или по расписанию),
@@ -21,7 +21,7 @@
 <div class="flex between runhead">
 <div><b>Сбор #{{ r.id }}</b>
 <span class="muted"> · {% if total == 1 and rows|length == 1 %}{{ rows[0].identity or rows[0].name }} <code>{{ rows[0].host }}</code>{% else %}устройств: {{ total }}{% endif %}</span></div>
-<span class="muted">{{ r.started_at[:16].replace('T',' ') }} · {{ 'вручную' if r.trigger=='manual' else 'по расписанию' }}
+<span class="muted">{{ r.started_at|localtime }} · {{ 'вручную' if r.trigger=='manual' else 'по расписанию' }}
 {% if total != 1 %} · собрано {{ r.ok_count }}{% endif %}{% if r.fail_count %} · <span class="tag err">не удалось {{ r.fail_count }}</span>{% endif %}
 {% if real_changed > 0 %} · <span class="tag warn">конфиг изменился{% if total != 1 %} у {{ real_changed }}{% endif %}</span>{% endif %}
 {% if first_count %} · <span class="tag">первый снимок{% if total != 1 %} у {{ first_count }}{% endif %}</span>{% endif %}

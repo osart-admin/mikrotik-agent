@@ -12,6 +12,7 @@ from fastapi import FastAPI, Form, HTTPException, Request, UploadFile, File
 from fastapi.responses import HTMLResponse, JSONResponse, PlainTextResponse, RedirectResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
+from markupsafe import Markup
 from starlette.middleware.sessions import SessionMiddleware
 
 from urllib.parse import quote
@@ -26,6 +27,19 @@ log = logging.getLogger("main")
 
 BASE_DIR = Path(__file__).parent
 templates = Jinja2Templates(directory=str(BASE_DIR / "templates"))
+
+_TIME_SLICES = {"full": (0, 16), "short": (5, 16), "time": (11, 16), "date": (0, 10)}
+
+
+def localtime(value: str | None, style: str = "full") -> Markup:
+    """A <time> the browser rewrites into its own zone; the text inside is the UTC fallback."""
+    if not value:
+        return Markup("")
+    a, b = _TIME_SLICES[style]
+    return Markup('<time datetime="{}" data-f="{}">{}</time>').format(value, style, value[a:b].replace("T", " "))
+
+
+templates.env.filters["localtime"] = localtime
 
 
 @asynccontextmanager

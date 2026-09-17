@@ -395,6 +395,17 @@ def test_runs_page_is_labelled_as_a_history(logged_in):
     assert "все включённые устройства" in html and "одно устройство" in html
 
 
+def test_timestamps_are_handed_to_the_browser_as_utc_instants(logged_in):
+    from app.main import localtime
+
+    run_id = db.start_run("manual")
+    started = next(r["started_at"] for r in db.list_runs(50) if r["id"] == run_id)
+    assert f'<time datetime="{started}" data-f="full">' in logged_in.get("/runs").text
+    assert localtime("2026-09-16T12:18:05+00:00", "short") == \
+        '<time datetime="2026-09-16T12:18:05+00:00" data-f="short">09-16 12:18</time>'
+    assert localtime(None) == ""
+
+
 def test_trigger_values_are_shown_in_russian(logged_in):
     db.start_run("manual")
     db.start_run("schedule")

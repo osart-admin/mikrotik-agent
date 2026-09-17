@@ -106,7 +106,7 @@
 <div class="field"><label>Интервал, минут (0 — выключить)</label><input name="interval" type="number" min="0" value="{{ interval }}"/></div>
 <div class="field" style="flex:0 0 130px"><label>&nbsp;</label><button class="btn" style="width:100%">Сохранить</button></div>
 </form>
-<p class="muted">{% if next_run %}Следующий запуск: {{ next_run[:16].replace('T',' ') }}{% else %}Автосбор выключен — собирайте вручную со страницы устройств.{% endif %}</p>
+<p class="muted">{% if next_run %}Следующий запуск: {{ next_run|localtime }}{% else %}Автосбор выключен — собирайте вручную со страницы устройств.{% endif %}</p>
 </div>
 
 <div class="card">
@@ -119,7 +119,7 @@
 <div class="card">
 <h2>Пользователи UI</h2>
 <table><tr><th>Логин</th><th>Роль</th><th>Создан</th><th></th></tr>
-{% for u in users %}<tr><td>{{ u.username }}</td><td class="muted">{{ u.role }}</td><td class="muted">{{ u.created_at[:10] }}</td>
+{% for u in users %}<tr><td>{{ u.username }}</td><td class="muted">{{ u.role }}</td><td class="muted">{{ u.created_at|localtime('date') }}</td>
 <td>{% if u.id != user.id %}<form method="post" action="/settings/users/{{ u.id }}/delete" onsubmit="return confirm('Удалить пользователя?')"><button class="btn danger sm">удалить</button></form>{% endif %}</td></tr>{% endfor %}
 </table>
 <form method="post" action="/settings/users" class="row" style="margin-top:12px">
@@ -131,7 +131,7 @@
 
 <div class="card"><h2>Журнал действий</h2>
 <table><tr><th>Время</th><th>Кто</th><th>Действие</th><th>Детали</th></tr>
-{% for a in audit %}<tr><td class="muted">{{ a.ts[5:16].replace('T',' ') }}</td><td class="muted">{{ a.username }}</td>
+{% for a in audit %}<tr><td class="muted">{{ a.ts|localtime('short') }}</td><td class="muted">{{ a.username }}</td>
 <td><code>{{ a.action }}</code></td><td class="muted">{{ a.details[:100] }}</td></tr>{% endfor %}
 </table></div>
 {% endblock %}

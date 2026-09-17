@@ -104,6 +104,13 @@ async function jsonOrError(req){
     catch(e){ return {ok:false, kind:'error', message:'сервер вернул HTTP '+r.status+' — подробности в логах контейнера'}; }
   }catch(e){ return {ok:false, kind:'error', message:'запрос не выполнен: '+e}; }
 }
+// Timestamps are stored in UTC; show them in the viewer's own zone.
+document.querySelectorAll('time[datetime]').forEach(function(el){
+  var d=new Date(el.getAttribute('datetime'));if(isNaN(d))return;
+  var p=function(n){return String(n).padStart(2,'0')},
+      date=d.getFullYear()+'-'+p(d.getMonth()+1)+'-'+p(d.getDate()),hm=p(d.getHours())+':'+p(d.getMinutes()),f=el.dataset.f;
+  el.textContent=f==='date'?date:f==='time'?hm:f==='short'?date.slice(5)+' '+hm:date+' '+hm;
+});
 function post(url,body){return jsonOrError(fetch(url,{method:'POST',headers:{'Content-Type':'application/json'},body:body?JSON.stringify(body):null}))}
 </script>
 {% block script %}{% endblock %}

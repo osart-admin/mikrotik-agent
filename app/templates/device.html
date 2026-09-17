@@ -133,7 +133,7 @@
 
 {% if history %}
 <div class="card"><h2>История изменений</h2>
-<table>{% for h in history %}<tr><td><code>{{ h.short }}</code></td><td class="muted">{{ h.date[:16].replace('T',' ') }}</td>
+<table>{% for h in history %}<tr><td><code>{{ h.short }}</code></td><td class="muted">{{ h.date|localtime }}</td>
 <td><a href="#" onclick="showDiff('{{ h.sha }}');return false">{{ h.subject[:70] }}</a></td></tr>{% endfor %}</table>
 <pre id="diff" class="diff" style="margin-top:12px;display:none;max-height:400px"></pre>
 </div>

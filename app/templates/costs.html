@@ -64,7 +64,7 @@
 <table>
 <tr><th>Время</th><th>Модель</th><th>Тариф</th><th>Чат</th><th class="num">Вход</th><th class="num">Кэш</th><th class="num">Запись&nbsp;кэша</th><th class="num">Выход</th><th class="num">Reasoning</th><th class="num">Задержка</th><th class="num">Стоимость</th></tr>
 {% for u in recent %}
-<tr><td class="muted">{{ u.ts[5:16].replace('T',' ') }}</td>
+<tr><td class="muted">{{ u.ts|localtime('short') }}</td>
 <td><code>{{ u.model }}</code></td>
 <td>{% if u.tier=='long' %}<span class="tag warn">long</span>{% elif u.tier=='unknown' %}<span class="tag err">нет цены</span>{% else %}<span class="tag">short</span>{% endif %}</td>
 <td class="muted">{{ (chats.get(u.chat_id) or '—')[:24] }}</td>

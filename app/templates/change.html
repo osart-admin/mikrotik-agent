@@ -2,7 +2,7 @@
 <div class="flex between" style="margin-bottom:12px">
   <div><h2 style="margin:0;font-size:17px">План #{{ plan.id }} — {{ plan.title }}</h2>
     <div class="muted">{{ plan.device_identity or plan.device_name }} (<code>{{ plan.device_host }}</code>)
-      · создан {{ plan.created_at[5:16].replace('T',' ') }} автором «{{ plan.created_by }}»</div></div>
+      · создан {{ plan.created_at|localtime('short') }} автором «{{ plan.created_by }}»</div></div>
   <a class="btn sec" href="/changes">← к списку</a>
 </div>
 {% if error %}<div class="alert err">{{ error }}</div>{% endif %}
@@ -10,10 +10,10 @@
 {% if plan.status=='awaiting_confirm' %}
 <div class="alert warn">
 <b>Изменение применено, откат вооружён.</b> Проверьте, что устройство отвечает и ведёт себя как нужно.
-Если не подтвердить до <b>{{ plan.rollback_deadline[11:16] if plan.rollback_deadline else '—' }}</b> UTC,
+Если не подтвердить до <b>{{ plan.rollback_deadline|localtime('time') if plan.rollback_deadline else '—' }}</b>,
 роутер сам восстановит бэкап <code>{{ plan.backup_name }}</code> и перезагрузится.
 </div>
-{% elif plan.status=='applied' %}<div class="alert ok">Выполнено {{ plan.confirmed_at[5:16].replace('T',' ') if plan.confirmed_at else '' }}, откат снят.</div>
+{% elif plan.status=='applied' %}<div class="alert ok">Выполнено {{ plan.confirmed_at|localtime('short') if plan.confirmed_at else '' }}, откат снят.</div>
 {% elif plan.status=='rolled_back' %}<div class="alert err">Откачено к бэкапу <code>{{ plan.backup_name }}</code>.</div>
 {% elif plan.status=='rejected' %}<div class="alert">Отклонено пользователем {{ plan.approved_by }}{% if plan.error %}: {{ plan.error }}{% endif %}</div>
 {% elif plan.status=='failed' %}<div class="alert err">Ошибка применения: {{ plan.error }}

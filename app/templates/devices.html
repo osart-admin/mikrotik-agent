@@ -2,7 +2,7 @@
 <div class="flex between" style="margin-bottom:14px">
   <h2 style="margin:0;font-size:17px">Устройства <span class="muted">({{ devices|length }})</span></h2>
   <div class="flex">
-    <span class="muted" id="sched">{% if next_run %}след. сбор {{ next_run[11:16] }}{% else %}<a href="/settings">автосбор выключен</a>{% endif %}</span>
+    <span class="muted" id="sched">{% if next_run %}след. сбор {{ next_run|localtime('time') }}{% else %}<a href="/settings">автосбор выключен</a>{% endif %}</span>
     <button class="btn sec" onclick="collect()" id="cbtn">Собрать всё</button>
     <a class="btn sec" href="/import">Импорт из Winbox</a>
     <a class="btn" href="/devices/new">+ Устройство</a>
@@ -45,7 +45,7 @@
   <td data-sort="{{ status_rank.get(d.status, 2) }}{{ '.' ~ d.status if d.status not in status_rank else '' }}">{% if d.status=='ok' %}<span class="tag ok">ok</span>
       {% elif d.status=='new' %}<span class="tag">новое</span>
       {% else %}<span class="tag err" title="{{ d.status_message }}">{{ d.status }}</span>{% endif %}</td>
-  <td class="muted" data-sort="{{ d.last_collected or '' }}">{{ d.last_collected[5:16].replace('T',' ') if d.last_collected else '—' }}
+  <td class="muted" data-sort="{{ d.last_collected or '' }}">{{ d.last_collected|localtime('short') if d.last_collected else '—' }}
       {% if d.export_lines %}<div>{{ d.export_lines }} строк</div>{% endif %}</td>
   <td style="white-space:nowrap">
       <button class="btn sec sm" onclick="collect({{ d.id }})" title="Собрать конфиг">↻</button>
@@ -63,7 +63,7 @@
 <table>
 <tr><th>#</th><th>Начало</th><th>Триггер</th><th>Успешно</th><th>Ошибок</th><th>Изменилось</th></tr>
 {% for r in runs %}
-<tr><td><a href="/runs">{{ r.id }}</a></td><td class="muted">{{ r.started_at[5:16].replace('T',' ') }}</td>
+<tr><td><a href="/runs">{{ r.id }}</a></td><td class="muted">{{ r.started_at|localtime('short') }}</td>
 <td class="muted">{{ 'вручную' if r.trigger=='manual' else 'по расписанию' }}</td><td>{{ r.ok_count }}</td>
 <td>{% if r.fail_count %}<span class="tag err">{{ r.fail_count }}</span>{% else %}0{% endif %}</td>
 <td>{% if r.changed_count %}<span class="tag warn">{{ r.changed_count }}</span>{% else %}0{% endif %}</td></tr>

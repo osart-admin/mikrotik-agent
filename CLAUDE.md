@@ -109,6 +109,9 @@ Request/data flow (all in `app/`):
   because none of those members appear in `/export`. A false positive here costs more than a
   miss: the page exists to be trusted without the model. Surfaced both as the `/audit` page and
   the `get_audit` tool.
+- **Timestamps** are stored as UTC ISO strings. Templates render them with the `localtime` filter
+  (`main.py`), which emits `<time datetime=...>`; a script in `base.html` rewrites it into the
+  browser's zone. Don't slice timestamp strings in templates - that shows UTC.
 - **`netcheck.py`** - "Проверить связь" when SSH fails: ping, TCP connect and SSH banner, to tell a
   dead host from a closed port or a firewall drop. It **never attempts a login**, so repeated
   checks cannot trip RouterOS's failed-login protection against the agent's own address.
