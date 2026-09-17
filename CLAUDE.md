@@ -1,6 +1,6 @@
 # CLAUDE.md
 
-Guidance for Claude Code (claude.ai/code) working in this repository.
+This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
 
 ## Orientation
 
@@ -15,8 +15,9 @@ Guidance for Claude Code (claude.ai/code) working in this repository.
 
 A self-hosted FastAPI service that SSHes into a fleet of MikroTik routers, stores each device's
 `/export` in a git repo, and lets an LLM answer questions about how the fleet is configured
-("как настроен файрвол на office-ccr?"). Read-only today; the write path (change proposals,
-approval, rollback) is designed for but not implemented. UI strings are Russian; code is English.
+("как настроен файрвол на office-ccr?"). Read-only toward routers: the model can queue a change
+plan (`propose_change` -> `/changes`), which is validated and then carried out by a human in
+Winbox; automatic applying exists in code but is switched off (see `apply.py` below). UI strings are Russian; code is English.
 
 ## Running & developing
 
@@ -35,6 +36,16 @@ union syntax plus asyncssh:
 ```bash
 docker run --rm -v "$PWD/tests:/app/tests" mikrotik-agent-mikrotik-agent python -m pytest tests -q
 ```
+
+That runs the tests against the `app/` **baked into the last build**. To test uncommitted edits
+without rebuilding, mount `app/` as well; single files and single tests work as usual:
+
+```bash
+docker run --rm -v "$PWD/tests:/app/tests" -v "$PWD/app:/app/app" mikrotik-agent-mikrotik-agent \
+  python -m pytest -q tests/test_audit.py::test_a_negated_empty_list_widens_the_rule_instead
+```
+
+There is no linter or formatter configured.
 
 `tests/conftest.py` points `DATA_DIR` at a temp dir before importing the app, so tests never touch
 real data. `tests/test_app.py` drives the real ASGI app with `TestClient`; no router needed.
@@ -98,6 +109,15 @@ Request/data flow (all in `app/`):
   because none of those members appear in `/export`. A false positive here costs more than a
   miss: the page exists to be trusted without the model. Surfaced both as the `/audit` page and
   the `get_audit` tool.
+- **`netcheck.py`** - "Проверить связь" when SSH fails: ping, TCP connect and SSH banner, to tell a
+  dead host from a closed port or a firewall drop. It **never attempts a login**, so repeated
+  checks cannot trip RouterOS's failed-login protection against the agent's own address.
+- **`vault.py`** - Fernet encryption for every secret in SQLite (API keys, SSH keys, device
+  passwords). The key is the `MASTER_KEY` env var if set, else `/data/master.key`, created on
+  first run.
+- **`winbox_import.py`** - bulk device import from a Winbox 3 `Addresses.cdb`. The binary field ids
+  are undocumented, so the parser guesses a column mapping and the UI has the user confirm it; the
+  parsed records are held encrypted on disk between the upload and confirm steps.
 - **`changes.py`** - deterministic validator for proposed change plans. Blocks the destructive
   set outright (resets, reboots, firmware, user management, scripts, schedulers, files, `/import`,
   scripting expressions, `;` chaining), allows a menu whitelist, flags lockout risks. **Rejects,
