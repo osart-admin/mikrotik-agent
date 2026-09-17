@@ -36,8 +36,8 @@ _NON_MATCH = frozenset({
     "address-list", "address-list-timeout", "to-addresses", "to-ports", "passthrough",
     "new-connection-mark", "new-packet-mark", "new-routing-mark", "new-dscp", "new-mss",
 })
-_TERMINAL = frozenset({"accept", "drop", "reject", "tarpit"})
-_ORDERED_CHAINS = ("/ip/firewall/filter", "/ip/firewall/raw")
+TERMINAL = frozenset({"accept", "drop", "reject", "tarpit"})
+ORDERED_CHAINS = ("/ip/firewall/filter", "/ip/firewall/raw")
 # Matched from the start of a word, so "latest", "threshold" and "template" do not count;
 # the stems may continue ("testing", "временно"), the short words may not ("temperature").
 _JUNK_RE = re.compile(
@@ -57,7 +57,7 @@ class Finding:
     command: str = ""
 
 
-def _matchers(e: rsc.Entry) -> dict[str, str]:
+def matchers(e: rsc.Entry) -> dict[str, str]:
     return {k: v for k, v in e.args.items() if k not in _NON_MATCH}
 
 
@@ -138,19 +138,19 @@ def shadowed_rules(entries: list[rsc.Entry]) -> list[Finding]:
     """Terminal rules that make every later rule they cover unreachable."""
     chains: dict[tuple[str, str], list[rsc.Entry]] = {}
     for e in entries:
-        if e.verb == "add" and e.path in _ORDERED_CHAINS and not e.is_disabled():
+        if e.verb == "add" and e.path in ORDERED_CHAINS and not e.is_disabled():
             chains.setdefault((e.path, e.args.get("chain", "")), []).append(e)
 
     out: list[Finding] = []
     for (path, chain), rules in chains.items():
         for i, earlier in enumerate(rules):
-            if earlier.args.get("action", "") not in _TERMINAL:
+            if earlier.args.get("action", "") not in TERMINAL:
                 continue
-            conditions = _matchers(earlier)
+            conditions = matchers(earlier)
             # Everything the earlier rule constrains, the later rule constrains identically - so
             # every packet reaching the later rule was already decided by the earlier one.
             covered = [r for r in rules[i + 1:]
-                       if all(_matchers(r).get(k) == v for k, v in conditions.items())]
+                       if all(matchers(r).get(k) == v for k, v in conditions.items())]
             if not covered:
                 continue
             lines = ", ".join(str(r.line_no) for r in covered[:5])

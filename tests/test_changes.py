@@ -233,6 +233,75 @@ def test_placeholders_are_filled_on_the_plan_page_and_revalidated(logged_in_chan
     assert db.get_plan(plan_id)["status"] == "applied"
 
 
+ENDS_WITH_DROP = """\
+/ip firewall filter add action=accept chain=input connection-state=established,related
+/ip firewall filter add action=drop chain=input comment="template: drop all other input"
+/ip firewall filter add action=drop chain=forward
+"""
+
+
+def test_disabling_firewall_rules_is_flagged():
+    """Plan #14 switched off 13 rules, the drop rules among them, and was queued as normal risk."""
+    r = v('/ip firewall filter disable [find where comment="defconf: drop all not coming from LAN"]')
+    assert r.ok and r.risk == "high"
+    assert "отключение или удаление правил firewall" in r.risky[0].reason
+
+
+def test_a_rule_appended_after_a_catch_all_drop_is_flagged():
+    r = changes.validate("/ip firewall filter add action=accept chain=forward src-address=10.10.0.0/24", ENDS_WITH_DROP)
+    assert r.ok and r.risk == "high"
+    assert any("никогда не сработает" in f.reason and "строка 3 конфигурации" in f.reason for f in r.risky)
+
+
+def test_place_before_a_disabled_rule_or_an_edited_table_is_not_flagged():
+    quiet = [
+        '/ip firewall filter add action=accept chain=input src-address=10.10.0.0/24 place-before=1',
+        "/ip firewall filter add action=accept chain=input disabled=yes src-address=10.10.0.0/24",
+        "/ip firewall filter disable [find where chain=input]\n"
+        "/ip firewall filter add action=accept chain=input src-address=10.10.0.0/24",
+        "/ip firewall nat add action=masquerade chain=srcnat out-interface=ether1",
+    ]
+    for plan in quiet:
+        assert not any("никогда не сработает" in f.reason for f in changes.validate(plan, ENDS_WITH_DROP).risky), plan
+
+
+def test_a_plan_that_adds_its_own_drop_before_an_accept_is_flagged():
+    r = changes.validate("/ip firewall filter add action=drop chain=input\n"
+                         "/ip firewall filter add action=accept chain=input protocol=icmp", "")
+    assert not any("никогда" in f.reason for f in r.risky)       # no export: the check does not run
+    r = changes.validate("/ip firewall filter add action=drop chain=input\n"
+                         "/ip firewall filter add action=accept chain=input protocol=icmp",
+                         "/ip firewall filter add action=accept chain=forward\n")
+    assert any("строка 1 этого плана" in f.reason for f in r.risky)
+
+
+def test_a_manually_done_plan_is_checked_against_the_next_collection(logged_in_changes):
+    import time
+
+    from app import db, store
+
+    client, plan_id = logged_in_changes
+    slug = db.get_plan(plan_id)["device_slug"]
+    store.write_device(slug, ENDS_WITH_DROP, "{}")
+    store.commit("before")
+    db.update_plan(plan_id, {"commands": '/ip firewall filter disable [find where comment="template: drop all other input"]\n'
+                                         "/ip firewall filter add action=accept chain=input protocol=icmp place-before=1"})
+    time.sleep(1.1)                            # git dates have one-second resolution
+    client.post(f"/changes/{plan_id}/done", data={"note": ""})
+    assert "Устройство ещё не собиралось" in client.get(f"/changes/{plan_id}").text
+
+    time.sleep(1.1)
+    store.write_device(slug, ENDS_WITH_DROP.replace("\n/ip firewall filter add action=drop chain=forward",
+                                                    "\n/ip firewall filter add action=accept chain=input protocol=icmp"
+                                                    "\n/ip firewall filter add action=drop chain=forward"), "{}")
+    store.commit("after")
+    page = client.get(f"/changes/{plan_id}").text
+    assert "Не подтверждено командами: 1 из 2" in page and "остались включены" in page
+    assert "выполнено не полностью" in client.get("/changes").text
+    store.remove_device(slug)
+    store.commit("cleanup")
+
+
 def test_propose_change_refuses_a_destructive_plan_without_queueing_it():
     import asyncio
 

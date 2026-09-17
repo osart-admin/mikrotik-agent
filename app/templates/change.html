@@ -105,6 +105,29 @@
 </div>
 </div>
 
+{% if verification %}
+<div class="card"><h2>Проверка по собранной конфигурации</h2>
+{% if verification.state == 'waiting' %}
+<p class="muted">Устройство ещё не собиралось после выполнения. Нажмите «Собрать» на его странице — здесь появится
+сверка каждой команды с новой конфигурацией.</p>
+{% else %}
+{% if verification.missing %}
+<div class="alert err">Не подтверждено командами: {{ verification.missing }} из {{ verification.lines|length }}.
+Их результата нет в конфигурации, собранной {{ verification.after_date|localtime('short') }}: команда не нашла
+записей, выдала ошибку или не была вставлена. Выполните эти строки заново или исправьте план.</div>
+{% else %}
+<div class="alert ok">Результат всех проверяемых команд виден в конфигурации, собранной {{ verification.after_date|localtime('short') }}.</div>
+{% endif %}
+<table>{% for x in verification.lines %}<tr>
+<td class="muted">{{ x.line }}</td>
+<td>{% if x.status=='ok' %}<span class="tag ok">есть</span>{% elif x.status=='missing' %}<span class="tag err">нет</span>{% else %}<span class="tag">не проверяется</span>{% endif %}</td>
+<td class="muted">{{ x.note }}</td>
+<td><code>{{ x.command }}</code></td>
+</tr>{% endfor %}</table>
+{% endif %}
+</div>
+{% endif %}
+
 {% if plan.output %}
 <div class="card"><h2>Протокол выполнения</h2><pre style="max-height:400px">{{ plan.output }}</pre></div>
 {% endif %}

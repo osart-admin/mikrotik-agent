@@ -275,7 +275,7 @@ def propose_change(device: str = "", title: str = "", rationale: str = "", comma
         raise ToolError("'rationale' is required: explain what the change does and why")
     dev = _devices([device])[0]
 
-    verdict = changes.validate(commands)
+    verdict = changes.validate(commands, store.read_export(dev["slug"]))
     findings = [{"line": f.line, "command": f.command, "reason": f.reason}
                 for f in (verdict.blocked or verdict.risky)]
 

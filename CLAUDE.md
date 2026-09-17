@@ -135,6 +135,16 @@ Request/data flow (all in `app/`):
   exists after another plan runs (the WireGuard public key the other device generates) is queued
   as a `<placeholder>`; the operator fills it on the plan page, the value must be one plain token,
   the filled plan is validated again, and "done"/apply are refused while any placeholder remains.
+  Given the device export, `validate()` also flags a firewall `add` that would land behind an
+  enabled catch-all terminal rule (it can never match); plans that disable/remove/set in the same
+  table are not simulated.
+- **`verify.py`** - checks a plan marked done against the configuration collected afterwards:
+  the last commit before `applied_at` versus the first one after it (or the unchanged export if a
+  collection ran and committed nothing). `add` must produce one more matching entry; `disable`,
+  `enable`, `remove` and `set [find ...]` are judged on the entries their plain-equality
+  conditions matched *before*. A "done" button only proves the commands were pasted - on 415 a
+  `disable [find]` and three `[find where ... comment=""]` lines changed nothing. Values RouterOS
+  omits as defaults and selectors other than `find a=b and c=d` are reported unchecked, never guessed.
 - **`apply.py`** - **dormant**: automatic applying is off (`apply_enabled` setting, default 0).
   On RouterOS 7.22 a `/system scheduler` entry carries its creator's policy set and editing one
   requires holding all of those policies, so a minimal write account cannot even toggle

@@ -18,7 +18,7 @@ from starlette.middleware.sessions import SessionMiddleware
 from urllib.parse import quote
 
 from . import (agent, apply, audit as audit_mod, auth, collector, changes as changes_mod, db, live,
-               llm, netcheck, onboard, pricing, rsc, scheduler, scrub, store, tools, winbox_import)
+               llm, netcheck, onboard, pricing, rsc, scheduler, scrub, store, tools, verify, winbox_import)
 from .config import APP_BUILT, APP_TIMEZONE, APP_VERSION, DATA_DIR
 from .ssh import SSHError, forget_host, known_host_entry
 
@@ -792,8 +792,10 @@ async def audit_page(request: Request):
 @app.get("/changes", response_class=HTMLResponse)
 async def changes_page(request: Request, error: str = "", ok: str = ""):
     plans = db.list_plans()
+    collected = {d["id"]: d["last_collected"] for d in db.list_devices()}
     for p in plans:
         p["placeholders"] = changes_mod.placeholders(p["commands"])
+        p["verification"] = verify.for_plan(p, collected.get(p["device_id"]))
     return render(request, "changes.html", plans=plans,
                   pending=[p for p in plans if p["status"] == "pending"],
                   awaiting=[p for p in plans if p["status"] == "awaiting_confirm"],
@@ -811,6 +813,7 @@ async def change_detail(request: Request, plan_id: int, error: str = ""):
     return render(request, "change.html", plan=plan, device=dict(dev) if dev else None,
                   findings=json.loads(plan["findings"] or "[]"), error=error,
                   placeholders=changes_mod.placeholders(plan["commands"]),
+                  verification=verify.for_plan(plan, dev["last_collected"] if dev else None),
                   apply_enabled=(db.get_setting("apply_enabled", "0") or "0") == "1",
                   default_minutes=apply.DEFAULT_ROLLBACK_MINUTES,
                   min_minutes=apply.MIN_ROLLBACK_MINUTES, max_minutes=apply.MAX_ROLLBACK_MINUTES)
@@ -833,7 +836,7 @@ async def change_fill(request: Request, plan_id: int):
         filled = changes_mod.fill(plan["commands"], values)
     except ValueError as exc:
         return RedirectResponse(f"/changes/{plan_id}?error=" + quote(str(exc)), status_code=303)
-    verdict = changes_mod.validate(filled)
+    verdict = changes_mod.validate(filled, store.read_export(plan["device_slug"]))
     if not verdict.ok:
         return RedirectResponse(f"/changes/{plan_id}?error=" + quote(
             "После подстановки план не прошёл валидатор, значения не сохранены: " + verdict.summary()), status_code=303)

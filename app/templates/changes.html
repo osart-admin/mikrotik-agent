@@ -30,6 +30,7 @@
     {% if p.status=='pending' and p.placeholders %}<span class="tag warn" title="{% for x in p.placeholders %}<{{ x }}> {% endfor %}">ждёт значений</span>
     {% elif p.status=='pending' %}<span class="tag">ждёт проверки</span>
     {% elif p.status=='awaiting_confirm' %}<span class="tag warn">ждёт подтверждения</span>
+    {% elif p.status=='applied' and p.verification and p.verification.missing %}<span class="tag err" title="по собранной конфигурации не видно результата части команд">выполнено не полностью</span>
     {% elif p.status=='applied' %}<span class="tag ok">применено</span>
     {% elif p.status=='rejected' %}<span class="tag">отклонено</span>
     {% elif p.status=='rolled_back' %}<span class="tag err">откачено</span>

@@ -49,6 +49,8 @@ RISKY: list[tuple[str, str]] = [
     (r"/interface\s+\w+\s+(remove|disable)", "отключение или удаление интерфейса"),
     (r"/interface\s+ethernet\s+(reset-mac-address\b|set\b.*\bmac-address=)",
      "смена MAC — если через этот порт идёт управление, связь пропадёт, пока не обновятся ARP-кэши"),
+    (r"/ipv?6?\s+firewall\s+(filter|nat|mangle|raw)\s+(disable|remove)\b",
+     "отключение или удаление правил firewall — снимает запреты, а у разрешений отнимает доступ"),
     (r"/ip\s+route\s+(remove|set)", "правка маршрутов"),
     (r"\bremove\b", "удаление записи"),
     (r"/ip\s+dhcp-server", "изменение DHCP-сервера"),
@@ -149,7 +151,41 @@ def parse_commands(text: str) -> list[str]:
     return out
 
 
-def validate(text: str) -> Validation:
+def dead_additions(commands: list[str], export: str) -> list[Finding]:
+    """Rules a plan appends behind a terminal rule with no conditions, where nothing ever reaches them.
+
+    `add` without place-before goes to the end of the chain. A plan that adds an accept for the
+    overlay network to a chain ending in `drop chain=input` has queued a rule that cannot match.
+    A plan that also disables, removes or edits rules in that table is not simulated: which rule
+    ends the chain after it runs is not known here.
+    """
+    from . import audit, rsc
+
+    def ends_chain(e: rsc.Entry) -> bool:
+        return (e.verb == "add" and e.path in audit.ORDERED_CHAINS and not e.is_disabled()
+                and e.args.get("action", "") in audit.TERMINAL and set(audit.matchers(e)) <= {"chain"})
+
+    planned = rsc.parse("\n".join(commands))
+    edited = {e.path for e in planned if e.verb != "add"}
+    enders = [(e, f"строка {e.line_no} конфигурации") for e in rsc.parse(export) if ends_chain(e)]
+    out: list[Finding] = []
+    for e in planned:
+        if e.verb != "add" or e.path not in audit.ORDERED_CHAINS or e.path in edited or e.is_disabled():
+            continue
+        chain = e.args.get("chain", "")
+        blocker = next(((b, where) for b, where in enders
+                        if b.path == e.path and b.args.get("chain", "") == chain), None)
+        if blocker is not None and "place-before" not in e.args:
+            b, where = blocker
+            out.append(Finding(e.raw, e.line_no,
+                               f"встанет в конец chain={chain} после «{b.raw}» ({where}) и никогда не "
+                               f"сработает — нужен place-before"))
+        if ends_chain(e) and "place-before" not in e.args:
+            enders.append((e, f"строка {e.line_no} этого плана"))
+    return out
+
+
+def validate(text: str, export: str | None = None) -> Validation:
     commands = parse_commands(text)
     v = Validation(ok=False, commands=commands)
 
@@ -192,4 +228,6 @@ def validate(text: str) -> Validation:
                     break
 
     v.ok = not v.blocked
+    if v.ok and export:
+        v.risky.extend(dead_additions(commands, export))
     return v
