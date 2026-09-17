@@ -128,6 +128,35 @@ def test_model_dropdown_defaults_to_mid_tier_not_the_priciest(logged_in):
     assert 'value="gpt-6-astra" selected' not in form
 
 
+def test_model_can_be_switched_from_the_chat_page(logged_in):
+    db.set_setting("llm_provider", "openai")
+    db.set_setting("openai_model", "gpt-5.6-terra")
+    chat_id = db.create_chat("model switch")
+    html = logged_in.get(f"/chat/{chat_id}").text
+    sel = html.split('id="model"')[1].split("</select>")[0]
+    assert 'value="gpt-5.6-terra" selected' in sel and 'value="gpt-6-astra"' in sel
+
+    assert logged_in.post("/api/chat/model", json={"model": "gpt-5.6-luna"}).json()["ok"] is True
+    assert db.get_setting("openai_model") == "gpt-5.6-luna"
+    assert logged_in.post("/api/chat/model", json={"model": "not-in-catalog"}).status_code == 400
+    assert db.get_setting("openai_model") == "gpt-5.6-luna"
+    db.delete_chat(chat_id)
+
+
+def test_reasoning_items_are_only_replayed_to_the_model_that_made_them():
+    from app import agent
+
+    chat_id = db.create_chat("raw replay")
+    call = [{"id": "c1", "name": "list_devices", "arguments": {}}]
+    db.add_message(chat_id, "user", "hi")
+    db.add_message(chat_id, "assistant", "", {"tool_calls": call, "model": "gpt-6-astra",
+                                              "raw": [{"type": "reasoning", "encrypted_content": "X"}]})
+    assert "raw" in agent.history_for_llm(chat_id, "gpt-6-astra")[1]
+    other = agent.history_for_llm(chat_id, "gpt-5.6-luna")[1]
+    assert "raw" not in other and other["tool_calls"] == call
+    db.delete_chat(chat_id)
+
+
 def test_model_dropdown_lists_the_catalog(logged_in):
     form = logged_in.get("/settings").text.split('action="/settings/llm"')[1].split("</form>")[0]
     for mid in ("gpt-6-astra", "gpt-5.6-sol", "gpt-5.6-terra", "gpt-5.6-luna"):

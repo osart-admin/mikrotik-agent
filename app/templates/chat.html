@@ -14,6 +14,7 @@
 .composer{position:sticky;bottom:0;background:var(--bg);padding-top:10px}
 .composer textarea{resize:vertical;min-height:62px}
 .body pre{margin:8px 0}
+.modelsel{width:auto;max-width:100%;padding:3px 6px;font-size:12px}
 @media(max-width:800px){.chatwrap{flex-direction:column}.side{flex:none;width:100%;display:flex;gap:6px;overflow-x:auto}}
 {% endblock %}
 {% block content %}
@@ -26,7 +27,11 @@
 </div>
 <div class="thread">
   <div class="flex between" style="margin-bottom:10px">
-    <span class="muted">{{ provider }}{% if model %} · <code>{{ model }}</code>{% endif %} · {{ device_count }} устройств
+    <span class="muted">{{ provider }} ·
+      <select id="model" class="modelsel" onchange="setModel(this)" title="Модель для следующих запросов — та же настройка, что в Настройках">
+      {% for m in catalog %}<option value="{{ m.model_id }}" {{ 'selected' if m.model_id==model }}>{{ m.label or m.model_id }}</option>{% endfor %}
+      {% if model not in catalog|map(attribute='model_id')|list %}<option value="{{ model }}" selected>{{ model or 'модель не задана' }}</option>{% endif %}
+      </select> · {{ device_count }} устройств
       {% if chat_totals.calls %} · этот чат: <b>{{ fmt_usd(chat_totals.cost) }}</b> ({{ chat_totals.calls }} вызовов){% endif %}</span>
     <button class="btn danger sm" onclick="delChat()">Удалить чат</button>
   </div>
@@ -87,6 +92,11 @@ async function send(){
     }
   }
   status.remove(); btn.disabled=false; inp.focus();
+}
+async function setModel(sel){
+  const r=await post('/api/chat/model',{model:sel.value});
+  if(r.ok){ [...sel.options].forEach(o=>o.defaultSelected=o.selected); add('<div class="tool">модель: <code>'+esc(sel.value)+'</code></div>'); }
+  else { [...sel.options].forEach(o=>o.selected=o.defaultSelected); add('<div class="alert err">Модель не сменилась: '+esc(String(r.message||r.detail||'ошибка'))+'</div>'); }
 }
 async function newChat(){const r=await post('/api/chat/new');location.href='/chat/'+r.id}
 async function delChat(){if(!confirm('Удалить чат?'))return;await post('/api/chat/{{ chat.id }}/delete');location.href='/chat'}

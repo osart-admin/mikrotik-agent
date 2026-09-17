@@ -400,14 +400,29 @@ async def chat_page(request: Request, chat_id: int):
     chat = db.get_chat(chat_id)
     if chat is None:
         raise HTTPException(404, "chat not found")
-    provider = db.get_setting("llm_provider", "openai")
+    provider = db.get_setting("llm_provider", "openai") or "openai"
     return render(request, "chat.html", chat=dict(chat), chats=[dict(c) for c in db.list_chats()],
                   messages=db.list_messages(chat_id), provider=provider,
-                  model=db.get_setting(f"{provider}_model", "") or "",
+                  model=agent.active_model(provider),
+                  catalog=[dict(m) for m in db.list_models(llm.family(provider))],
                   has_key=db.has_secret(f"{provider}_api_key"),
                   device_count=len(db.list_devices()),
                   chat_totals=db.chat_cost(chat_id), budget=agent.budget_status(),
                   fmt_usd=pricing.fmt_usd)
+
+
+@app.post("/api/chat/model")
+async def chat_model(request: Request):
+    """Switch the active provider's model from the chat page; the same setting the Settings page edits."""
+    user = auth.require_user(request)
+    model = str((await request.json()).get("model") or "").strip()
+    provider = db.get_setting("llm_provider", "openai") or "openai"
+    allowed = {m["model_id"] for m in db.list_models(llm.family(provider))} | {agent.active_model(provider)}
+    if model not in allowed:
+        raise HTTPException(400, "модели нет в каталоге — добавьте её в Настройках")
+    db.set_setting(f"{provider}_model", model)
+    db.audit(user["username"], "llm_settings", f"{provider} {model} (chat)")
+    return {"ok": True, "model": model}
 
 
 @app.post("/api/chat/new")

@@ -81,6 +81,10 @@ def system_prompt() -> str:
     return SYSTEM_PROMPT.replace("{fleet_map}", fleet_map())
 
 
+def active_model(provider: str) -> str:
+    return db.get_setting(f"{provider}_model", "") or pricing.DEFAULT_MODEL.get(provider, "")
+
+
 def provider_from_settings() -> llm.Provider:
     name = db.get_setting("llm_provider", "openai") or "openai"
     key = db.get_secret(f"{name}_api_key")
@@ -89,7 +93,7 @@ def provider_from_settings() -> llm.Provider:
     return llm.build(
         name,
         key,
-        db.get_setting(f"{name}_model", "") or pricing.DEFAULT_MODEL.get(name, ""),
+        active_model(name),
         db.get_setting(f"{name}_base_url", "") or "",
         db.get_setting(f"{name}_reasoning_effort", "") or "",
     )
@@ -108,7 +112,7 @@ def budget_status() -> dict[str, Any]:
     }
 
 
-def history_for_llm(chat_id: int) -> list[dict[str, Any]]:
+def history_for_llm(chat_id: int, model: str) -> list[dict[str, Any]]:
     out: list[dict[str, Any]] = []
     for m in db.list_messages(chat_id):
         if m["role"] == "user":
@@ -117,7 +121,9 @@ def history_for_llm(chat_id: int) -> list[dict[str, Any]]:
             msg: dict[str, Any] = {"role": "assistant", "content": m["content"]}
             if m["extra"].get("tool_calls"):
                 msg["tool_calls"] = m["extra"]["tool_calls"]
-            if m["extra"].get("raw"):
+            # Encrypted reasoning is bound to the model that produced it, and the model can be
+            # switched mid-chat. Without raw the adapter rebuilds the calls from tool_calls.
+            if m["extra"].get("raw") and m["extra"].get("model") == model:
                 msg["raw"] = m["extra"]["raw"]
             out.append(msg)
         elif m["role"] == "tool":
@@ -146,7 +152,7 @@ async def run_turn(chat_id: int, user_text: str) -> AsyncIterator[dict[str, Any]
         yield {"type": "error", "message": str(exc)}
         return
 
-    messages = history_for_llm(chat_id)
+    messages = history_for_llm(chat_id, provider.model)
     system = system_prompt()
     turn = pricing.Usage()
     turn_cost = 0.0
@@ -189,6 +195,7 @@ async def run_turn(chat_id: int, user_text: str) -> AsyncIterator[dict[str, Any]
         extra: dict[str, Any] = {"tool_calls": call_dicts}
         if reply.raw_items:
             extra["raw"] = reply.raw_items
+            extra["model"] = provider.model
         db.add_message(chat_id, "assistant", reply.content, extra)
         step_msg: dict[str, Any] = {"role": "assistant", "content": reply.content, "tool_calls": call_dicts}
         if reply.raw_items:
