@@ -296,6 +296,11 @@ def propose_change(device: str = "", title: str = "", rationale: str = "", comma
     if verdict.risky:
         note = ("\nВНИМАНИЕ, помечено как рискованное:\n"
                 + "\n".join(f"  строка {f.line}: {f.reason}" for f in verdict.risky))
+    waiting = changes.placeholders("\n".join(verdict.commands))
+    if waiting:
+        note += ("\nПлан ждёт значений: " + ", ".join(f"<{p}>" for p in waiting)
+                 + ". Оператор введёт их на странице плана; до этого выполнить его нельзя. "
+                   "Скажи пользователю, откуда взять каждое значение и после какого плана.")
     return (f"План #{plan_id} поставлен в очередь для {dev['slug']} "
             f"({len(verdict.commands)} команд, риск: {verdict.risk}).{note}\n\n"
             f"Ничего не применено и применено не будет: автоматическое применение отключено. "
@@ -462,7 +467,14 @@ SCHEMAS: list[dict[str, Any]] = [
             "operations, command chaining). Do not try to work around a rejection - report it to "
             "the user and suggest doing that part by hand.\n\n"
             "Read the current configuration first so the change fits what is actually there, and "
-            "say plainly in 'rationale' what will change and what could break."
+            "say plainly in 'rationale' what will change and what could break.\n\n"
+            "When a command needs a value that will only exist after another plan has run - for "
+            "example the public key WireGuard generates when the interface is created on the other "
+            "device - still queue this plan now, writing the value as a placeholder in angle "
+            "brackets: public-key=\"<public-key 415>\". The operator types it in on the plan page, "
+            "and the plan cannot be run until every placeholder is filled. Name in 'rationale' the "
+            "plan it waits for and where to read the value. Never invent such a value, and do not "
+            "leave the dependent part as commands in the chat instead."
         ),
         "parameters": {
             "type": "object",

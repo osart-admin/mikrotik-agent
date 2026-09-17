@@ -168,6 +168,71 @@ def test_propose_change_queues_a_valid_plan(tmp_path):
     db.delete_device(db.get_device_by_slug("planbox")["id"])
 
 
+PEER_415 = ('/interface wireguard peers add allowed-address=10.0.10.214/32,10.100.115.0/24 interface=wireguard '
+            'name=peer-415 persistent-keepalive=10s public-key="<public-key 415>"')
+KEY_415 = "kt5ZVieDTnTgvcxik+69AZs3lilCrVZZhgWk+Mc9ljM="
+
+
+def test_a_value_known_only_after_another_plan_is_a_placeholder():
+    r = v(PEER_415 + "\n/ip route add dst-address=10.100.115.0/24 gateway=<gateway 415>")
+    assert r.ok
+    assert changes.placeholders("\n".join(r.commands)) == ["public-key 415", "gateway 415"]
+    assert changes.fill(PEER_415, {"public-key 415": KEY_415}).endswith(f'public-key="{KEY_415}"')
+
+
+@pytest.mark.parametrize("value", [
+    'x" private-key="y', "a b", "x;/system reboot", "[:execute x]", "$var", "", "<nested>",
+])
+def test_a_filled_value_cannot_change_what_the_command_is(value):
+    with pytest.raises(ValueError):
+        changes.fill(PEER_415, {"public-key 415": value})
+
+
+def test_a_plan_waiting_for_a_value_is_queued_and_says_so():
+    """Asked to add 415 to the CHR-UA hub, the agent queued only 415's half and left the hub's
+    peer - which needs the key 415 generates - as commands in the chat."""
+    import asyncio
+
+    from app import db, tools
+
+    dev_id = db.create_device({"slug": "hubbox", "name": "HubBox", "host": "192.0.2.72", "port": 22,
+                               "username": "agent", "auth": "key"})
+    out = asyncio.run(tools.call("propose_change", {
+        "device": "hubbox", "title": "Пир для 415", "rationale": "После плана на 415.", "commands": PEER_415,
+    }))
+    assert "поставлен в очередь" in out and "ждёт значений: <public-key 415>" in out
+    assert "placeholder" in next(t for t in tools.SCHEMAS if t["name"] == "propose_change")["description"]
+    db.delete_device(dev_id)
+
+
+def test_placeholders_are_filled_on_the_plan_page_and_revalidated(logged_in_changes):
+    from app import db
+
+    client, plan_id = logged_in_changes
+    db.update_plan(plan_id, {"commands": "/interface wireguard set wireguard <setting>\n" + PEER_415})
+
+    page = client.get(f"/changes/{plan_id}").text
+    assert "Нужно ввести значения" in page and "&lt;public-key 415&gt;" in page
+    assert client.get("/changes").text.count("ждёт значений") >= 1
+
+    r = client.post(f"/changes/{plan_id}/done", data={"note": ""}, follow_redirects=False)
+    assert "error=" in r.headers["location"] and db.get_plan(plan_id)["status"] == "pending"
+
+    # One plain token, but it turns the command into a forbidden one: the validator has the last word.
+    r = client.post(f"/changes/{plan_id}/fill", data={"name": ["setting", "public-key 415"],
+                                                      "value": ["private-key=abc", KEY_415]},
+                    follow_redirects=False)
+    assert "error=" in r.headers["location"]
+    assert "<setting>" in db.get_plan(plan_id)["commands"], "a rejected fill must not be saved"
+
+    client.post(f"/changes/{plan_id}/fill", data={"name": ["setting", "public-key 415"],
+                                                  "value": ["mtu=1420", KEY_415]})
+    plan = db.get_plan(plan_id)
+    assert "<" not in plan["commands"] and KEY_415 in plan["commands"]
+    client.post(f"/changes/{plan_id}/done", data={"note": ""})
+    assert db.get_plan(plan_id)["status"] == "applied"
+
+
 def test_propose_change_refuses_a_destructive_plan_without_queueing_it():
     import asyncio
 

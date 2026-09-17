@@ -27,7 +27,8 @@
       {% else %}<span class="tag">обычный</span>{% endif %}</td>
   <td class="num">{{ p.commands.splitlines()|length }}</td>
   <td>
-    {% if p.status=='pending' %}<span class="tag">ждёт проверки</span>
+    {% if p.status=='pending' and p.placeholders %}<span class="tag warn" title="{% for x in p.placeholders %}<{{ x }}> {% endfor %}">ждёт значений</span>
+    {% elif p.status=='pending' %}<span class="tag">ждёт проверки</span>
     {% elif p.status=='awaiting_confirm' %}<span class="tag warn">ждёт подтверждения</span>
     {% elif p.status=='applied' %}<span class="tag ok">применено</span>
     {% elif p.status=='rejected' %}<span class="tag">отклонено</span>

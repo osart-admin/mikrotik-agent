@@ -792,6 +792,8 @@ async def audit_page(request: Request):
 @app.get("/changes", response_class=HTMLResponse)
 async def changes_page(request: Request, error: str = "", ok: str = ""):
     plans = db.list_plans()
+    for p in plans:
+        p["placeholders"] = changes_mod.placeholders(p["commands"])
     return render(request, "changes.html", plans=plans,
                   pending=[p for p in plans if p["status"] == "pending"],
                   awaiting=[p for p in plans if p["status"] == "awaiting_confirm"],
@@ -808,9 +810,39 @@ async def change_detail(request: Request, plan_id: int, error: str = ""):
     dev = db.get_device(plan["device_id"])
     return render(request, "change.html", plan=plan, device=dict(dev) if dev else None,
                   findings=json.loads(plan["findings"] or "[]"), error=error,
+                  placeholders=changes_mod.placeholders(plan["commands"]),
                   apply_enabled=(db.get_setting("apply_enabled", "0") or "0") == "1",
                   default_minutes=apply.DEFAULT_ROLLBACK_MINUTES,
                   min_minutes=apply.MIN_ROLLBACK_MINUTES, max_minutes=apply.MAX_ROLLBACK_MINUTES)
+
+
+@app.post("/changes/{plan_id}/fill")
+async def change_fill(request: Request, plan_id: int):
+    """Operator types in the values a plan waits for; the filled plan is validated again."""
+    user = auth.require_user(request)
+    plan = db.get_plan(plan_id)
+    if plan is None or plan["status"] != "pending":
+        raise HTTPException(400, "план нельзя изменить в текущем состоянии")
+    form = await request.form()
+    waiting = set(changes_mod.placeholders(plan["commands"]))
+    values = {str(n): str(v).strip() for n, v in zip(form.getlist("name"), form.getlist("value"))
+              if str(n) in waiting and str(v).strip()}
+    if not values:
+        return RedirectResponse(f"/changes/{plan_id}?error=" + quote("Не введено ни одного значения."), status_code=303)
+    try:
+        filled = changes_mod.fill(plan["commands"], values)
+    except ValueError as exc:
+        return RedirectResponse(f"/changes/{plan_id}?error=" + quote(str(exc)), status_code=303)
+    verdict = changes_mod.validate(filled)
+    if not verdict.ok:
+        return RedirectResponse(f"/changes/{plan_id}?error=" + quote(
+            "После подстановки план не прошёл валидатор, значения не сохранены: " + verdict.summary()), status_code=303)
+    findings = [{"line": f.line, "command": f.command, "reason": f.reason} for f in verdict.risky]
+    db.update_plan(plan_id, {"commands": "\n".join(verdict.commands), "risk": verdict.risk,
+                             "findings": json.dumps(findings, ensure_ascii=False)})
+    # Names only: an operator may type a secret into a placeholder, and the audit log is not the place for it.
+    db.audit(user["username"], "change_filled", f"#{plan_id}: " + ", ".join(f"<{n}>" for n in values))
+    return RedirectResponse(f"/changes/{plan_id}", status_code=303)
 
 
 @app.post("/changes/{plan_id}/reject")
@@ -832,6 +864,8 @@ async def change_apply(request: Request, plan_id: int, rollback_minutes: int = F
     plan = db.get_plan(plan_id)
     if plan is None or plan["status"] != "pending":
         raise HTTPException(400, "план нельзя применить в текущем состоянии")
+    if changes_mod.placeholders(plan["commands"]):
+        return RedirectResponse(f"/changes/{plan_id}?error=" + quote("Сначала введите значения, которых ждёт план."), status_code=303)
     if (db.get_setting("apply_enabled", "0") or "0") != "1":
         return RedirectResponse(
             f"/changes/{plan_id}?error=" + quote(
@@ -864,6 +898,9 @@ async def change_done(request: Request, plan_id: int, note: str = Form("")):
     plan = db.get_plan(plan_id)
     if plan is None or plan["status"] != "pending":
         raise HTTPException(400, "план нельзя отметить выполненным в текущем состоянии")
+    if changes_mod.placeholders(plan["commands"]):
+        return RedirectResponse(f"/changes/{plan_id}?error=" + quote(
+            "План ещё ждёт значений — его команды нельзя было выполнить как есть."), status_code=303)
     db.update_plan(plan_id, {"status": "applied", "approved_by": user["username"],
                              "approved_at": db.now_iso(), "applied_at": db.now_iso(),
                              "confirmed_at": db.now_iso(),

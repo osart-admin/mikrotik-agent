@@ -33,6 +33,19 @@
 </div>
 
 <div class="card" style="flex:1">
+{% if plan.status=='pending' and placeholders %}
+  <h2>Нужно ввести значения</h2>
+  <p class="muted">В командах есть значения, которых агент не мог знать заранее — обычно они появляются
+  после выполнения другого плана (см. обоснование). Пока они не введены, план выполнить нельзя.
+  После ввода команды снова проверяются валидатором.</p>
+  <form method="post" action="/changes/{{ plan.id }}/fill" style="margin-bottom:18px">
+  {% for p in placeholders %}
+  <div class="field"><label><code>&lt;{{ p }}&gt;</code></label>
+  <input type="hidden" name="name" value="{{ p }}"/>
+  <input name="value" autocomplete="off" spellcheck="false" data-1p-ignore data-lpignore="true"/></div>
+  {% endfor %}
+  <button class="btn">Подставить</button></form>
+{% endif %}
 {% if plan.status=='pending' %}
   {% if apply_enabled and device and device.write_enabled %}
   <h2>Применить</h2>
@@ -53,11 +66,11 @@
     <li>Вставьте команды</li>
     <li>Убедитесь, что всё работает, и нажмите <kbd>Ctrl+X</kbd> ещё раз, чтобы зафиксировать</li>
   </ol>
-  <button class="btn sec" type="button" onclick="copyCommands()">Скопировать команды</button>
+  <button class="btn sec" type="button" onclick="copyCommands()" {{ 'disabled' if placeholders }}>Скопировать команды</button>
   <form method="post" action="/changes/{{ plan.id }}/done" style="margin-top:14px">
   <div class="field"><label>Отметить выполненным</label>
   <input name="note" placeholder="заметка (необязательно)"/></div>
-  <button class="btn">Выполнил вручную</button></form>
+  <button class="btn" {{ 'disabled' if placeholders }}>Выполнил вручную</button></form>
   <h3 style="margin-top:18px">Или отклонить</h3>
   {% endif %}
   <form method="post" action="/changes/{{ plan.id }}/reject">

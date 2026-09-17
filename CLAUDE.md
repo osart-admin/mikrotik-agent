@@ -131,7 +131,10 @@ Request/data flow (all in `app/`):
 - **`changes.py`** - deterministic validator for proposed change plans. Blocks the destructive
   set outright (resets, reboots, firmware, user management, scripts, schedulers, files, `/import`,
   scripting expressions, `;` chaining), allows a menu whitelist, flags lockout risks. **Rejects,
-  never sanitises** - a plan is not quietly edited into something permissible.
+  never sanitises** - a plan is not quietly edited into something permissible. A value that only
+  exists after another plan runs (the WireGuard public key the other device generates) is queued
+  as a `<placeholder>`; the operator fills it on the plan page, the value must be one plain token,
+  the filled plan is validated again, and "done"/apply are refused while any placeholder remains.
 - **`apply.py`** - **dormant**: automatic applying is off (`apply_enabled` setting, default 0).
   On RouterOS 7.22 a `/system scheduler` entry carries its creator's policy set and editing one
   requires holding all of those policies, so a minimal write account cannot even toggle

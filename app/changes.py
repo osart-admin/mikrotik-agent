@@ -66,6 +66,13 @@ ALLOWED_MENUS = (
 
 MAX_COMMANDS = 40
 
+# A value that only exists once another plan has run - the public key WireGuard generates on the
+# other device - is written as <name> and typed in by the operator before the plan can be run.
+_PLACEHOLDER = re.compile(r"<([^<>\"\n]{1,60})>")
+# One token with nothing that could close a quote, start a script or a second command: the filled
+# text is re-validated, but a value must not be able to change what the command is.
+_VALUE = re.compile(r'^[^\s"\\;\[\]<>{}$]{1,200}$')
+
 # Verbs beyond add/set/remove/enable/disable, recognised only in the menu they belong to. An
 # unknown verb anywhere else still fails to parse and is rejected.
 MENU_VERBS: dict[str, tuple[str, ...]] = {
@@ -114,6 +121,21 @@ def normalize_menu(command: str) -> str:
         if m and _menu_path(m.group(1)) == menu:
             return menu
     return ""
+
+
+def placeholders(text: str) -> list[str]:
+    """Names of the <placeholders> still to be filled, in order of first appearance."""
+    return list(dict.fromkeys(m.group(1) for m in _PLACEHOLDER.finditer(text)))
+
+
+def fill(text: str, values: dict[str, str]) -> str:
+    """Substitute operator-supplied values; raises ValueError for a value that is not one plain token."""
+    for name, value in values.items():
+        if not _VALUE.match(value):
+            raise ValueError(f"значение для <{name}> должно быть одним словом без пробелов, кавычек, "
+                             f"скобок, ; и $")
+        text = text.replace(f"<{name}>", value)
+    return text
 
 
 def parse_commands(text: str) -> list[str]:
