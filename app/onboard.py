@@ -162,7 +162,7 @@ async def onboard(dev: sqlite3.Row, admin_user: str, admin_password: str, agent_
     # Verify with the new identity before switching the device over.
     creds = Credentials(agent_user, key_pems=[db.get_secret(collector.KEY_RSA if key_kind == "rsa" else collector.KEY_ED25519) or ""])
     async with RouterSSH(dev["host"], dev["port"], creds) as r:
-        ident = parse_print(await r.run("/system identity print")).get("name", "")
+        ident = await collector.read_identity(r)
     log.append(f"verified key login as {agent_user} (identity {ident})")
     db.update_device(dev["id"], {"username": agent_user, "auth": "key", "password_enc": None, "ros_version": version, "status": "ok", "status_message": "onboarded"})
     log.append("device switched to key auth")

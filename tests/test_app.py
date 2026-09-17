@@ -393,6 +393,58 @@ def test_identity_is_used_as_the_display_name(logged_in):
     logged_in.post(f"/devices/{dev['id']}/delete")
 
 
+@pytest.mark.parametrize("identity_line, expected", [
+    ("/system identity set name=415\n", "415"),
+    ('/system identity set name="Office Core"\n', "Office Core"),
+    ("", "MikroTik"),                       # the default name is left out of an export
+])
+def test_identity_is_read_from_the_export_not_the_print(monkeypatch, identity_line, expected):
+    """RouterOS 7.24.4 printed name=415 as "name: 4" with the 1 and 5 on continuation lines."""
+    import asyncio
+
+    from app import collector, store
+
+    banner = "# 2026-09-17 15:39:04 by RouterOS 7.24.4\n# software id = 56I2-QAS8\n"
+    outputs = {
+        "/system resource print": "  version: 7.24.4 (stable)\n  board-name: RB2011UiAS-2HnD",
+        "/system identity print": "  name: 4\n        1\n        5",
+        "/system identity export terse": banner + identity_line,
+        "/system routerboard print": "  model: RB2011UiAS-2HnD",
+        "/export terse hide-sensitive": banner + "/ip address add address=10.0.0.1/24 interface=ether1\n" + identity_line,
+    }
+
+    class FakeRouter:
+        def __init__(self, *a, **k): pass
+        async def __aenter__(self): return self
+        async def __aexit__(self, *a): return False
+        async def run(self, command, timeout=30): return outputs[command]
+
+    monkeypatch.setattr(collector, "RouterSSH", FakeRouter)
+    monkeypatch.setattr(collector, "credentials_for", lambda dev: None)
+    dev_id = db.create_device({"slug": "wrapped-identity", "name": "415", "host": "192.0.2.41", "port": 22,
+                               "username": "agent", "auth": "key"})
+    try:
+        status, _, _ = asyncio.run(collector.collect_device(db.get_device(dev_id), db.start_run("manual")))
+        assert status == "ok"
+        assert db.get_device(dev_id)["identity"] == expected
+        assert asyncio.run(collector.probe(db.get_device(dev_id)))["identity"] == expected
+    finally:
+        store.remove_device("wrapped-identity")
+        db.delete_device(dev_id)
+
+
+def test_an_error_instead_of_an_identity_export_is_not_taken_for_a_name():
+    import asyncio
+
+    from app import collector
+
+    class Router:
+        async def run(self, command, timeout=30):
+            return "bad command name export (line 1 column 18)"
+
+    assert asyncio.run(collector.read_identity(Router())) == ""
+
+
 def test_agent_group_grants_only_what_the_collector_uses():
     """The read path must stay incapable of writing, reading secrets, or generating traffic."""
     import re
@@ -410,7 +462,9 @@ def test_agent_group_grants_only_what_the_collector_uses():
     commands = re.findall(r'r\.run\("([^"]+)"\)', src)
     assert commands, "no router commands found - did collector.py change shape?"
     for cmd in commands:
-        assert cmd.startswith("/export") or cmd.endswith("print"), f"{cmd!r} is not a read command"
+        words = cmd.split()
+        assert words[0] == "/export" or "export" in words or cmd.endswith("print"), f"{cmd!r} is not a read command"
+        assert "[" not in cmd and not cmd.startswith(":"), f"{cmd!r} is a script, not a read command"
 
 
 def test_no_tool_can_change_a_router():

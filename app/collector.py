@@ -48,11 +48,28 @@ def _version(res: dict[str, str]) -> str:
     return (res.get("version") or "").split(" ")[0]
 
 
+DEFAULT_IDENTITY = "MikroTik"
+
+
+def identity_from_export(text: str) -> str:
+    """The identity in an export; RouterOS leaves the default name out of it."""
+    names = [e.args["name"] for e in rsc.parse(text) if e.path == "/system/identity" and "name" in e.args]
+    return names[-1] if names else DEFAULT_IDENTITY
+
+
+async def read_identity(r: RouterSSH) -> str:
+    # Not `/system identity print`: RouterOS 7.24.4 printed name=415 one character per line
+    # ("name: 4\n        1\n        5"), and a key: value parser keeps only the "4".
+    out = await r.run("/system identity export terse")
+    # A real export opens with the "# <date> by RouterOS" banner; anything else is an error message.
+    return identity_from_export(out) if out.lstrip().startswith("#") else ""
+
+
 async def probe(dev: sqlite3.Row | dict) -> dict[str, str]:
     """Connect and read identity/version - the 'Test connection' button."""
     async with RouterSSH(dev["host"], dev["port"], credentials_for(dev)) as r:
         res = parse_print(await r.run("/system resource print"))
-        ident = parse_print(await r.run("/system identity print")).get("name", "")
+        ident = await read_identity(r)
     return {"identity": ident, "version": _version(res), "board": res.get("board-name", ""), "arch": res.get("architecture-name", "")}
 
 
@@ -62,7 +79,6 @@ async def collect_device(dev: sqlite3.Row, run_id: int) -> tuple[str, str, bool]
     try:
         async with RouterSSH(dev["host"], dev["port"], credentials_for(dev)) as r:
             res = parse_print(await r.run("/system resource print"))
-            ident = parse_print(await r.run("/system identity print")).get("name", "")
             rb = parse_print(await r.run("/system routerboard print"))
             export = await r.run("/export terse hide-sensitive")
         body = rsc.strip_header(export)
@@ -72,7 +88,7 @@ async def collect_device(dev: sqlite3.Row, run_id: int) -> tuple[str, str, bool]
         changed = store.write_device(dev["slug"], body, facts.to_json(fx))
         now = db.now_iso()
         fields: dict[str, Any] = {
-            "status": "ok", "status_message": "", "identity": ident or fx.get("identity") or dev["identity"],
+            "status": "ok", "status_message": "", "identity": identity_from_export(body),
             "ros_version": _version(res) or dev["ros_version"], "board": res.get("board-name") or dev["board"],
             "model": rb.get("model") or res.get("board-name") or dev["model"],
             "serial": rb.get("serial-number") or dev["serial"], "arch": res.get("architecture-name") or dev["arch"],
