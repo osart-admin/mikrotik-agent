@@ -7,8 +7,10 @@ the repo is tiny so this is fine inside the event loop.
 """
 from __future__ import annotations
 
+import re
 import subprocess
 import threading
+from datetime import datetime, timezone
 from pathlib import Path
 
 from .config import CONFIGS_DIR
@@ -98,6 +100,41 @@ def history(slug: str | None = None, limit: int = 20) -> list[dict[str, str]]:
         sha, date, subject = line.split("\x1f", 2)
         out.append({"sha": sha, "short": sha[:8], "date": date, "subject": subject})
     return out
+
+
+_BLAME_HEAD = re.compile(r"^([0-9a-f]{40}) \d+ (\d+)")
+_UNCOMMITTED = "0" * 40
+
+
+def blame_dates(slug: str) -> dict[int, str]:
+    """export.rsc line number -> ISO date git last saw that line change.
+
+    Lines only in the working tree (not yet committed) come back under the all-zero sha with
+    committer-time set to *now*; they are dropped, so a caller must treat a missing line as
+    "unknown", not "new".
+    """
+    if not has_commits():
+        return {}
+    out = _git("blame", "--porcelain", "--", f"{slug}/{EXPORT_FILE}", check=False)
+    commit_time: dict[str, int] = {}
+    dates: dict[int, str] = {}
+    sha, line_no = "", 0
+    for line in out.splitlines():
+        head = _BLAME_HEAD.match(line)
+        if head:
+            sha, line_no = head.group(1), int(head.group(2))
+        elif line.startswith("committer-time "):
+            commit_time[sha] = int(line.split(maxsplit=1)[1])
+        elif line.startswith("\t") and sha in commit_time and sha != _UNCOMMITTED:
+            dates[line_no] = datetime.fromtimestamp(commit_time[sha], timezone.utc).date().isoformat()
+    return dates
+
+
+def first_commit_date() -> str | None:
+    if not has_commits():
+        return None
+    roots = _git("rev-list", "--max-parents=0", "HEAD").split()
+    return _git("show", "-s", "--format=%cI", roots[-1]).strip() if roots else None
 
 
 def show(slug: str, sha: str) -> str | None:

@@ -339,7 +339,7 @@ def test_no_tool_can_change_a_router():
     assert set(tools.REGISTRY) == {
         "list_devices", "fleet_summary", "list_sections", "get_sections", "search_config",
         "get_device_facts", "get_full_export", "config_history", "config_diff", "get_live_state",
-        "propose_change",
+        "get_audit", "propose_change",
     }
 
     for name, fn in tools.REGISTRY.items():

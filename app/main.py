@@ -16,8 +16,8 @@ from starlette.middleware.sessions import SessionMiddleware
 
 from urllib.parse import quote
 
-from . import (agent, apply, auth, collector, changes as changes_mod, db, live, llm, netcheck, onboard,
-               pricing, rsc, scheduler, scrub, store, tools, winbox_import)
+from . import (agent, apply, audit as audit_mod, auth, collector, changes as changes_mod, db, live,
+               llm, netcheck, onboard, pricing, rsc, scheduler, scrub, store, tools, winbox_import)
 from .config import APP_TIMEZONE, DATA_DIR
 from .ssh import SSHError, forget_host, known_host_entry
 
@@ -718,6 +718,21 @@ async def costs_page(request: Request):
 
 
 # ---------------------------------------------------------------- change queue (phase 4)
+
+@app.get("/audit", response_class=HTMLResponse)
+async def audit_page(request: Request):
+    rows = []
+    for d in db.list_devices():
+        text = store.read_export(d["slug"])
+        if text is None:
+            continue
+        rows.append({"device": d, "findings": audit_mod.audit(text, store.blame_dates(d["slug"]))})
+    rows.sort(key=lambda r: -len(r["findings"]))
+    return render(request, "audit.html", page="audit", rows=rows,
+                  since=store.first_commit_date() or "",
+                  stale_days=audit_mod.STALE_DAYS,
+                  total=sum(len(r["findings"]) for r in rows))
+
 
 @app.get("/changes", response_class=HTMLResponse)
 async def changes_page(request: Request, error: str = "", ok: str = ""):

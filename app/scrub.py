@@ -19,8 +19,11 @@ _KEY_RE = re.compile(
     r"(?P<val>\"(?:[^\"\\]|\\.)*\"|\S+)",
     re.IGNORECASE,
 )
-# snmp community names are the credential; `/snmp community add name=public`
-_SNMP_RE = re.compile(r"^(/snmp/? community add .*?\bname=)(\"(?:[^\"\\]|\\.)*\"|\S+)", re.IGNORECASE)
+# snmp community names are the credential: `/snmp community add name=public`, and the renamed
+# default `/snmp community set [ find default=yes ] name=public`. Leading whitespace is allowed
+# because tools quote export lines indented.
+_SNMP_RE = re.compile(r"^(\s*/snmp/? community (?:add|set) .*?\bname=)(\"(?:[^\"\\]|\\.)*\"|\S+)",
+                      re.IGNORECASE)
 _PLACEHOLDER = '"<hidden>"'
 
 

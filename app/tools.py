@@ -244,6 +244,27 @@ async def get_live_state(device: str = "", query: str = "", match: str = "", lim
     return _cap(f"{head}\n{body}" if body else f"{head}\n(пусто)")
 
 
+def get_audit(device: str = "", **_: Any) -> str:
+    from . import audit as audit_mod
+
+    blocks = []
+    for dev in _devices([device] if device else None):
+        text = store.read_export(dev["slug"])
+        if text is None:
+            continue
+        found = audit_mod.audit(text, store.blame_dates(dev["slug"]))
+        if not found:
+            blocks.append(f"# {dev['slug']} - замечаний нет")
+            continue
+        lines = [f"# {dev['slug']} - {len(found)} находок"]
+        for f in found:
+            lines.append(f"[{f.severity}] {f.title} (строка {f.line_no})\n    {f.command}\n    {f.detail}")
+        blocks.append("\n".join(lines))
+    if not blocks:
+        return "No collected configurations to audit yet."
+    return _cap(_clean("\n\n".join(blocks)))
+
+
 def propose_change(device: str = "", title: str = "", rationale: str = "", commands: str = "", **_: Any) -> str:
     """Queue a change plan for human approval. This tool never applies anything."""
     from . import changes
@@ -298,6 +319,7 @@ REGISTRY: dict[str, Handler] = {
     "config_history": config_history,
     "config_diff": config_diff,
     "get_live_state": get_live_state,
+    "get_audit": get_audit,
     "propose_change": propose_change,
 }
 
@@ -408,6 +430,22 @@ SCHEMAS: list[dict[str, Any]] = [
                 "limit": {"type": "integer", "description": "Max lines to return (1-200, default 50). Logs return the newest lines."},
             },
             "required": ["device", "query"],
+        },
+    },
+    {
+        "name": "get_audit",
+        "description": (
+            "Deterministic configuration findings for one device, or for the whole fleet when "
+            "'device' is omitted: rules matching on an empty address-list, rules made unreachable "
+            "by an earlier rule that covers them, and disabled entries left sitting. Computed from "
+            "the stored export, not from a model's reading of it. Use it when the user asks what is "
+            "wrong, messy or unused in a configuration, and quote the line numbers it returns."
+        ),
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "device": {"type": "string", "description": "Device slug, name, identity or host. Omit for every device."},
+            },
         },
     },
     {

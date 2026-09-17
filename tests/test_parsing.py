@@ -73,6 +73,14 @@ def test_facts_extract():
     assert {s["name"] for s in f["services"]} == {"ssh"}   # www is disabled
 
 
+def test_scrub_hides_snmp_communities_when_quoted_indented_or_renamed():
+    text = ("    /snmp community add name=corp-ro disabled=yes\n"
+            "/snmp community set [ find default=yes ] addresses=10.0.0.0/8 name=corp-rw\n")
+    out, counts = scrub.scrub(text)
+    assert "corp-ro" not in out and "corp-rw" not in out
+    assert counts["snmp-community"] == 2
+
+
 def test_scrub_hides_secrets_but_keeps_structure():
     out, counts = scrub.scrub(EXPORT)
     assert "SECRETKEY=" not in out and "hunter2" not in out

@@ -85,6 +85,19 @@ Request/data flow (all in `app/`):
   a `print` covered by `read`, so this needs no extra router rights; active probes (ping,
   traceroute, bandwidth-test) would need the `test` policy and are deliberately out of scope.
   Results are cached for 15s so a chain of tool calls cannot hammer a device.
+- **`audit.py`** - deterministic findings over a stored export, no SSH round-trip: rules matching
+  on an address-list with no enabled members, terminal rules that shadow every rule below them in
+  the same chain, and disabled entries that are stale past `STALE_DAYS` or whose comment marks them
+  as temporary. Every finding carries the export
+  line number and raw command so it can be checked in Winbox without trusting the model; staleness
+  dates come from `store.blame_dates()` (git blame on `export.rsc`, not a stored timestamp) so an
+  uncommitted line (all-zero sha, which git dates *now*) is dropped and reads as "unknown", not
+  "new". The empty-list check only looks at rule tables, resolves IPv4 and IPv6 lists separately,
+  and skips any list that is filled at runtime (`address-list=` on add-*-to-address-list rules,
+  `/ppp profile`, DHCP `address-lists=`), the built-in interface lists and lists with `include=`,
+  because none of those members appear in `/export`. A false positive here costs more than a
+  miss: the page exists to be trusted without the model. Surfaced both as the `/audit` page and
+  the `get_audit` tool.
 - **`changes.py`** - deterministic validator for proposed change plans. Blocks the destructive
   set outright (resets, reboots, firmware, user management, scripts, schedulers, files, `/import`,
   scripting expressions, `;` chaining), allows a menu whitelist, flags lockout risks. **Rejects,

@@ -1,0 +1,46 @@
+{% extends "base.html" %}{% set page='audit' %}{% block content %}
+<style>
+.find{border-bottom:1px solid var(--border2);padding:10px 0}
+.find:last-child{border-bottom:0;padding-bottom:0}
+.find .t{font-weight:600;font-size:13px}
+.find .d{color:var(--text2);font-size:13px;margin:3px 0 6px}
+.find pre{font-size:11.5px;padding:7px 9px;white-space:pre-wrap;word-break:break-all}
+.sev{min-width:58px;text-align:center}
+</style>
+<div class="flex between" style="margin-bottom:6px">
+<h2 style="margin:0;font-size:17px">Аудит конфигураций</h2>
+<span class="muted">находок: {{ total }}</span>
+</div>
+<p class="muted" style="margin:0 0 14px">Проверки считаются по сохранённому <code>/export</code>, без обращения к роутерам — поэтому
+работают и для недоступного устройства. Каждая находка указывает строку в экспорте: её видно в Winbox, верить модели не нужно.
+Ничего не исправляется автоматически; чтобы получить план, спросите про находку в <a href="/chat">чате</a>.</p>
+
+{% if since %}
+<p class="muted" style="margin:0 0 14px">Проверка «отключено и забыто» опирается на историю git: запись попадает в список,
+если не менялась дольше {{ stale_days }} дн. либо помечена комментарием как временная. История конфигов ведётся с {{ since[:10] }} —
+пока она короткая, срабатывает в основном вторая половина правила.</p>
+{% endif %}
+
+{% for r in rows %}
+<div class="card">
+<div class="flex between" style="margin-bottom:8px">
+<div><a href="/devices/{{ r.device.id }}"><b>{{ r.device.identity or r.device.name }}</b></a>
+<span class="muted"> · <code>{{ r.device.host }}</code></span></div>
+<span class="muted">{% if r.findings %}находок: {{ r.findings|length }}{% else %}замечаний нет{% endif %}</span>
+</div>
+{% for f in r.findings %}
+<div class="find">
+<div class="flex" style="align-items:baseline;gap:8px">
+<span class="tag sev {{ 'err' if f.severity=='high' else ('warn' if f.severity=='medium' else '') }}">{{ f.severity }}</span>
+<span class="t">{{ f.title }}</span>
+<span class="muted">строка {{ f.line_no }}</span>
+</div>
+<div class="d">{{ f.detail }}</div>
+<pre>{{ f.command }}</pre>
+</div>
+{% endfor %}
+</div>
+{% else %}
+<div class="card"><p class="muted">Нет ни одной собранной конфигурации — добавьте устройство на странице <a href="/">Устройства</a> и выполните сбор.</p></div>
+{% endfor %}
+{% endblock %}
