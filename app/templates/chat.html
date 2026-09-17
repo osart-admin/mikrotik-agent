@@ -45,6 +45,7 @@
     {% endif %}
   {% endfor %}
   </div>
+  {% if busy %}<div class="alert warn">Агент ещё отвечает на последний вопрос — ответ появится здесь сам.</div>{% endif %}
   <div class="composer">
     <textarea id="inp" placeholder="Например: как настроен файрвол на office-ccr? какие подсети ходят через wireguard?" onkeydown="if(event.key==='Enter'&&(event.metaKey||event.ctrlKey))send()"></textarea>
     <div class="flex between" style="margin-top:8px">
@@ -66,7 +67,14 @@ async function send(){
   inp.value=''; btn.disabled=true;
   add('<div class="msg u"><div class="who">вы</div><div class="body">'+esc(text)+'</div></div>');
   const status=add('<div class="tool">думаю…</div>');
+  let finished=false;
+  try{
   const resp=await fetch('/api/chat/{{ chat.id }}/send',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({message:text})});
+  if(!resp.ok){
+    const r=await resp.json().catch(()=>({}));
+    add('<div class="alert err">'+esc(String(r.detail||('HTTP '+resp.status)))+'</div>');
+    inp.value=text; finished=true; return;
+  }
   const reader=resp.body.getReader(), dec=new TextDecoder(); let buf='';
   while(true){
     const {done,value}=await reader.read(); if(done)break;
@@ -89,10 +97,25 @@ async function send(){
         add('<div class="tool">'+bits.join(' · ')+'</div>');
       }
       else if(ev.type==='error'){add('<div class="alert err">'+esc(ev.message)+'</div>');}
+      else if(ev.type==='done'){finished=true;}
     }
   }
-  status.remove(); btn.disabled=false; inp.focus();
+  }catch(e){}
+  finally{
+    status.remove();
+    if(finished){ btn.disabled=false; inp.focus(); }
+    else { add('<div class="alert warn">Соединение с сервером прервалось. Агент продолжает работу — ответ сохранится в этом чате и появится здесь сам.</div>'); waitForTurn(); }
+  }
 }
+// The turn outlives the connection; poll until it ends, then show what it saved.
+function waitForTurn(){
+  btn.disabled=true;
+  setTimeout(async function poll(){
+    const r=await fetch('/api/chat/{{ chat.id }}/status').then(r=>r.json()).catch(()=>({running:true}));
+    if(r.running) setTimeout(poll,3000); else location.reload();
+  },3000);
+}
+{% if busy %}waitForTurn();{% endif %}
 async function setModel(sel){
   const r=await post('/api/chat/model',{model:sel.value});
   if(r.ok){ [...sel.options].forEach(o=>o.defaultSelected=o.selected); add('<div class="tool">модель: <code>'+esc(sel.value)+'</code></div>'); }

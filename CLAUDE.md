@@ -65,7 +65,10 @@ Request/data flow (all in `app/`):
   registration order, so `SessionMiddleware` is added *after* the `@app.middleware("http")` guard
   to end up outside it - the guard reads `request.session`. Registered the other way round, every
   protected page 500s with "SessionMiddleware must be installed". `db.init_db()` runs at import
-  time (not in lifespan) because the session secret lives in the DB.
+  time (not in lifespan) because the session secret lives in the DB. A chat turn runs as a task
+  in `_turns`, detached from its SSE response: Starlette cancels a streaming response when the
+  client disconnects, and a turn cancelled with it (`CancelledError` slips past `except Exception`)
+  leaves paid tool rounds with no answer. One turn per chat at a time (409 otherwise).
 - **`ssh.py`** - asyncssh wrapper. Logs in as `<user>+ct` (RouterOS suffix that disables colours
   and terminal autodetect, so output is parseable). Explicit algorithm lists widen support back to
   RouterOS 6; **asyncssh's `get_*_algs()` return `bytes`**, so the wish-list intersection decodes

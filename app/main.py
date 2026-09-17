@@ -405,6 +405,7 @@ async def chat_page(request: Request, chat_id: int):
                   messages=db.list_messages(chat_id), provider=provider,
                   model=agent.active_model(provider),
                   catalog=[dict(m) for m in db.list_models(llm.family(provider))],
+                  busy=chat_id in _turns,
                   has_key=db.has_secret(f"{provider}_api_key"),
                   device_count=len(db.list_devices()),
                   chat_totals=db.chat_cost(chat_id), budget=agent.budget_status(),
@@ -436,6 +437,14 @@ async def chat_delete(request: Request, chat_id: int):
     return {"ok": True}
 
 
+_turns: dict[int, asyncio.Task[None]] = {}
+
+
+@app.get("/api/chat/{chat_id}/status")
+async def chat_status(chat_id: int):
+    return {"running": chat_id in _turns}
+
+
 @app.post("/api/chat/{chat_id}/send")
 async def chat_send(request: Request, chat_id: int):
     user = auth.require_user(request)
@@ -446,17 +455,33 @@ async def chat_send(request: Request, chat_id: int):
     chat = db.get_chat(chat_id)
     if chat is None:
         raise HTTPException(404, "chat not found")
+    # Two turns in one chat would interleave their tool calls and results in the history.
+    if chat_id in _turns:
+        raise HTTPException(409, "агент ещё отвечает на предыдущий вопрос в этом чате — дождитесь ответа")
     if chat["title"] == "Новый чат":
         db.rename_chat(chat_id, text[:60])
     db.audit(user["username"], "chat", f"#{chat_id}: {text[:200]}")
 
-    async def stream():
+    queue: asyncio.Queue[dict[str, Any] | None] = asyncio.Queue()
+
+    async def turn() -> None:
         try:
             async for event in agent.run_turn(chat_id, text):
-                yield f"data: {json.dumps(event, ensure_ascii=False)}\n\n"
+                queue.put_nowait(event)
         except Exception as exc:  # noqa: BLE001
             log.exception("chat turn failed")
-            yield f"data: {json.dumps({'type': 'error', 'message': str(exc)}, ensure_ascii=False)}\n\n"
+            queue.put_nowait({"type": "error", "message": str(exc)})
+        finally:
+            _turns.pop(chat_id, None)
+            queue.put_nowait(None)
+
+    # The turn is detached from the connection: when the browser drops the stream, Starlette
+    # cancels the response, and a turn cancelled with it keeps the paid tool rounds but no answer.
+    _turns[chat_id] = asyncio.create_task(turn())
+
+    async def stream():
+        while (event := await queue.get()) is not None:
+            yield f"data: {json.dumps(event, ensure_ascii=False)}\n\n"
         yield "data: {\"type\": \"done\"}\n\n"
 
     return StreamingResponse(stream(), media_type="text/event-stream",

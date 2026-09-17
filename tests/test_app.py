@@ -143,6 +143,64 @@ def test_model_can_be_switched_from_the_chat_page(logged_in):
     db.delete_chat(chat_id)
 
 
+def test_a_dropped_chat_stream_does_not_cancel_the_turn(monkeypatch, logged_in):
+    import asyncio
+    import json
+
+    from fastapi import HTTPException
+    from starlette.requests import Request
+
+    from app import agent, auth, main
+
+    chat_id = db.create_chat("detached")
+    monkeypatch.setattr(auth, "require_user", lambda request: {"username": "tester"})
+
+    async def slow_turn(cid, text):
+        yield {"type": "tool_call", "name": "list_devices", "arguments": {}}
+        await asyncio.sleep(0.3)
+        db.add_message(cid, "assistant", "готово")
+        yield {"type": "answer", "content": "готово"}
+
+    monkeypatch.setattr(agent, "run_turn", slow_turn)
+
+    def http(first_chunk: asyncio.Event):
+        pending = [{"type": "http.request", "body": json.dumps({"message": "hi"}).encode(), "more_body": False}]
+
+        async def receive():
+            if pending:
+                return pending.pop()
+            await first_chunk.wait()          # the browser goes away right after the first event
+            return {"type": "http.disconnect"}
+
+        async def send(message):
+            if message["type"] == "http.response.body" and message.get("body"):
+                first_chunk.set()
+
+        scope = {"type": "http", "method": "POST", "path": f"/api/chat/{chat_id}/send", "query_string": b"",
+                 "headers": [(b"content-type", b"application/json")]}
+        return scope, receive, send
+
+    async def scenario():
+        scope, receive, send = http(asyncio.Event())
+        response = await main.chat_send(Request(scope, receive), chat_id)
+        await response(scope, receive, send)
+        task = main._turns[chat_id]           # the stream is gone, the turn is not
+        assert not task.done()
+
+        scope2, receive2, _ = http(asyncio.Event())
+        with pytest.raises(HTTPException) as busy:
+            await main.chat_send(Request(scope2, receive2), chat_id)
+        assert busy.value.status_code == 409
+
+        await task
+        assert chat_id not in main._turns
+
+    asyncio.run(scenario())
+    assert db.list_messages(chat_id)[-1]["content"] == "готово"
+    assert logged_in.get(f"/api/chat/{chat_id}/status").json() == {"running": False}
+    db.delete_chat(chat_id)
+
+
 def test_reasoning_items_are_only_replayed_to_the_model_that_made_them():
     from app import agent
 
